@@ -1,0 +1,6 @@
+*/*.o
+build/
+exp/
+netmon.cfg
+valgrind-out.txt
+.vscode/
