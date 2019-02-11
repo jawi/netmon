@@ -14,7 +14,7 @@ INC_FLAGS := $(addprefix -I,$(INC_DIRS))
 
 CFLAGS += -Wall -Wstrict-prototypes -Wmissing-prototypes -Wshadow -Wconversion
 CPPFLAGS += $(INC_FLAGS) -MMD -MP
-LDFLAGS = -lmnl -lmosquitto -lconfuse -pthread
+LDFLAGS = -lmnl -lmosquitto -pthread -lyaml
 
 all: $(BUILD_DIR)/$(TARGET_EXEC)
 

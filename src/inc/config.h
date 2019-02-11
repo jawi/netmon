@@ -12,17 +12,15 @@
 #include <stdbool.h>
 
 typedef struct config {
-    char *client_id;
-
     uid_t priv_user;
     gid_t priv_group;
 
+    char *client_id;
     char *host;
     uint16_t port;
-
     uint8_t qos;
     bool retain;
-    
+
     bool use_tls;
     bool use_auth;
 
@@ -38,7 +36,7 @@ typedef struct config {
     bool verify_peer;
 } config_t;
 
-int read_config(const char *file, config_t *config);
+config_t *read_config(const char *file);
 void free_config(config_t *config);
 
 #endif /* CONFIG_H_ */

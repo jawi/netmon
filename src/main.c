@@ -55,6 +55,18 @@ static run_state_t run_state;
 	pthread_exit(0); \
 	return NULL
 
+static void flush_event_queue(void) {
+    event_queue_item_t *ptr = run_state.event_queue;
+
+    while (ptr) {
+        event_queue_item_t *item = ptr;
+        ptr = ptr->next;
+
+        free_event(item->event);
+        free(item);
+    }
+}
+
 static void event_producer_callback(event_t *event) {
     pthread_mutex_lock(&(run_state.mutex));
 
@@ -125,13 +137,13 @@ static void *event_consumer_thread(void *arg) {
         PTHREAD_TERMINATE();
     }
 
-    if (connect_mqtt(mqtt_handle, state->config)) {
-        log_warning("Failed to connect to MQTT broker!");
-        PTHREAD_TERMINATE();
-    }
-
     // Make sure we clean up the mess we've made...
     pthread_cleanup_push(event_consumer_cleanup, mqtt_handle);
+
+    if (connect_mqtt(mqtt_handle, state->config)) {
+        log_error("Failed to connect to MQTT broker, giving up...");
+        PTHREAD_TERMINATE();
+    }
 
     log_debug("Starting consumer thread main loop...");
 
@@ -196,8 +208,8 @@ static int daemon_start(run_state_t *state) {
 
     ret = pthread_setname_np(state->tid[0], "mnl handler");
     if (ret) {
-	// non-fatal
-	log_warning("failed to set name for producer thread: %m");
+        // non-fatal
+        log_warning("failed to set name for producer thread: %m");
     }
 
     ret = pthread_create(&(state->tid[1]), NULL, event_consumer_thread, state);
@@ -208,14 +220,16 @@ static int daemon_start(run_state_t *state) {
 
     ret = pthread_setname_np(state->tid[1], "mqtt handler");
     if (ret) {
-	// non-fatal
-	log_warning("failed to set name for consumer thread: %m");
+        // non-fatal
+        log_warning("failed to set name for consumer thread: %m");
     }
 
     log_info(PNAME " v" VERSION " started.");
 
     pthread_join(state->tid[0], NULL);
     pthread_join(state->tid[1], NULL);
+
+    flush_event_queue();
 
     return 0;
 }
@@ -324,8 +338,6 @@ static void signal_handler(int signo) {
 
         pthread_cancel(run_state.tid[0]);
         pthread_cancel(run_state.tid[1]);
-    } else if (signo == SIGHUP) {
-
     }
 }
 
@@ -338,7 +350,7 @@ int main(int argc, char *argv[]) {
     bool debug = false;
     int opt;
 
-    while ((opt = getopt(argc, argv, "c:dfhp:")) != -1) {
+    while ((opt = getopt(argc, argv, "c:dfhp:v")) != -1) {
         switch (opt) {
         case 'c':
             conf_file = strdup(optarg);
@@ -352,9 +364,14 @@ int main(int argc, char *argv[]) {
         case 'p':
             pid_file = strdup(optarg);
             break;
+        case 'v':
         case 'h':
         default:
-            fprintf(stderr, "Usage: %s [-d] [-f] [-c config file]\n", PNAME);
+            fprintf(stderr, PNAME " v" VERSION "\n");
+            if (opt == 'v') {
+                exit(0);
+            }
+            fprintf(stderr, "Usage: %s [-d] [-f] [-c config file] [-p pid file] [-v]\n", PNAME);
             exit(1);
         }
     }
@@ -385,10 +402,39 @@ int main(int argc, char *argv[]) {
     sigaction(SIGTERM, &sigact, NULL);
     sigaction(SIGINT, &sigact, NULL);
 
-    run_state.config = malloc(sizeof(config_t));
+    run_state.config = read_config(conf_file);
 
-    if (read_config(conf_file, run_state.config)) {
+    if (run_state.config == NULL) {
         exit(EXIT_FAILURE);
+    }
+
+    log_debug("Using configuration:");
+    if (!foreground) {
+        log_debug("- daemon user/group: %d/%d", run_state.config->priv_user, run_state.config->priv_group);
+    }
+    log_debug("- MQTT server: %s:%d", run_state.config->host, run_state.config->port);
+    log_debug("  - client ID: %s", run_state.config->client_id);
+    log_debug("  - MQTT QoS: %d", run_state.config->qos);
+    log_debug("  - retain messages: %s", run_state.config->retain ? "yes" : "no");
+    if (run_state.config->use_auth) {
+        log_debug("  - using client credentials");
+    }
+    if (run_state.config->use_tls) {
+        log_debug("- using TLS options:");
+        log_debug("  - use TLS version: %s", run_state.config->tls_version);
+        if (run_state.config->cacertpath) {
+            log_debug("  - CA cert path: %s", run_state.config->cacertpath);
+        }
+        if (run_state.config->cacertfile) {
+            log_debug("  - CA cert file: %s", run_state.config->cacertfile);
+        }
+        if (run_state.config->certfile) {
+            log_debug("  - using client certificate: %s", run_state.config->certfile);
+        }
+        log_debug("  - verify peer: %s", run_state.config->verify_peer ? "yes" : "no");
+        if (run_state.config->ciphers) {
+            log_debug("  - cipher suite: %s", run_state.config->ciphers);
+        }
     }
 
     if (!foreground) {
@@ -407,7 +453,7 @@ int main(int argc, char *argv[]) {
 
     // best effort; will only succeed if the permissions are set correctly...
     unlink(pid_file);
-    
+
     free(conf_file);
     free(pid_file);
 

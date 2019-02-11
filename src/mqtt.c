@@ -53,11 +53,16 @@ mqtt_handle_t *init_mqtt(void) {
     return handle;
 }
 
-void destroy_mqtt(mqtt_handle_t *handle) {
+static inline void internal_destroy_mqtt(mqtt_handle_t *handle) {
     if (handle) {
         mosquitto_destroy(handle->mosq);
-
         handle->mosq = NULL;
+    }
+}
+
+void destroy_mqtt(mqtt_handle_t *handle) {
+    if (handle) {
+        internal_destroy_mqtt(handle);
 
         free(handle);
     }
@@ -66,6 +71,10 @@ void destroy_mqtt(mqtt_handle_t *handle) {
 }
 
 static int internal_connect_mqtt(mqtt_handle_t *handle) {
+    if (handle->conn_state == CONNECTED || handle->conn_state == DISCONNECTED) {
+        return 0;
+    }
+
     int status = mosquitto_connect(handle->mosq, handle->host, handle->port, 60 /* keepalive */);
     if (status != MOSQ_ERR_SUCCESS) {
         log_warning("failed to connect to MQTT broker: %s", MOSQ_ERROR(status));
@@ -86,7 +95,9 @@ static int internal_disconnect_mqtt(mqtt_handle_t *handle) {
         return -1;
     }
 
-    handle->conn_state = NOT_CONNECTED;
+    if (handle->conn_state != DISCONNECTED) {
+        handle->conn_state = NOT_CONNECTED;
+    }
 
     return 0;
 }
@@ -118,7 +129,7 @@ static void my_connect_cb(struct mosquitto *mosq, void *user_data, int result) {
         log_info("successfully connected to MQTT broker");
         handle->conn_state = CONNECTED;
     } else if (handle->conn_state != DISCONNECTED) {
-        log_warning("failed to connect to MQTT broker");
+        log_warning("unable to connect to MQTT broker");
 
         handle->conn_state = NOT_CONNECTED;
         internal_reconnect_mqtt(handle);
@@ -153,6 +164,7 @@ int connect_mqtt(mqtt_handle_t *handle, const config_t *cfg) {
         status = mosquitto_tls_insecure_set(handle->mosq, false);
         if (status != MOSQ_ERR_SUCCESS) {
             log_error("failed to disable insecure TLS: %s", MOSQ_ERROR(status));
+            internal_destroy_mqtt(handle);
             return -1;
         }
 
@@ -160,6 +172,7 @@ int connect_mqtt(mqtt_handle_t *handle, const config_t *cfg) {
                                         cfg->verify_peer, cfg->tls_version, cfg->ciphers);
         if (status != MOSQ_ERR_SUCCESS) {
             log_error("failed to set TLS options: %s", MOSQ_ERROR(status));
+            internal_destroy_mqtt(handle);
             return -1;
         }
 
@@ -167,6 +180,7 @@ int connect_mqtt(mqtt_handle_t *handle, const config_t *cfg) {
                                    cfg->cacertfile, cfg->cacertpath, cfg->certfile, cfg->keyfile, NULL);
         if (status != MOSQ_ERR_SUCCESS) {
             log_error("failed to set TLS settings: %s", MOSQ_ERROR(status));
+            internal_destroy_mqtt(handle);
             return -1;
         }
     }
@@ -177,6 +191,7 @@ int connect_mqtt(mqtt_handle_t *handle, const config_t *cfg) {
         status = mosquitto_username_pw_set(handle->mosq, cfg->username, cfg->password);
         if (status != MOSQ_ERR_SUCCESS) {
             log_error("failed to set authentication credentials: %s", MOSQ_ERROR(status));
+            internal_destroy_mqtt(handle);
             return -1;
         }
     }
@@ -191,16 +206,12 @@ int connect_mqtt(mqtt_handle_t *handle, const config_t *cfg) {
     handle->qos = cfg->qos;
     handle->retain = cfg->retain;
 
-    if (internal_connect_mqtt(handle)) {
-        log_error("failed to connect to MQTT broker: %s", MOSQ_ERROR(status));
-        return -1;
-    }
-
     log_debug("starting MQTT message loop");
 
     status = mosquitto_loop_start(handle->mosq);
     if (status != MOSQ_ERR_SUCCESS) {
         log_error("failed to start MQTT message loop: %s", MOSQ_ERROR(status));
+        internal_destroy_mqtt(handle);
         return -1;
     }
 
@@ -226,6 +237,10 @@ int disconnect_mqtt(mqtt_handle_t *handle) {
 }
 
 void publish_mqtt(mqtt_handle_t *handle, const event_t *event) {
+    if (internal_connect_mqtt(handle)) {
+        return;
+    }
+
     const char *topic = event_topic_name(event->event_type);
 
     log_debug("sending event on %s :: %s", topic, (char *)event->data);
