@@ -2,5 +2,7 @@
 build/
 exp/
 netmon.cfg
+netmon.yml
+*.code-workspace
 valgrind-out.txt
 .vscode/
