@@ -12,12 +12,17 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include "addr_common.h"
 #include "logging.h"
 #include "util.h"
 
+// 6*2 digits + 5*colon + '\0' = 18
+#define MAC_STR_LEN 18
+
 char *format_mac(const uint8_t lladdr[MAC_LEN]) {
-    static char buf[18];
-    snprintf(buf, sizeof(buf), "%02x:%02x:%02x:%02x:%02x:%02x",
+    static char buf[MAC_STR_LEN];
+    // no need to check return value here, we're using a static buffer
+    snprintf(buf, MAC_STR_LEN, "%02x:%02x:%02x:%02x:%02x:%02x",
              lladdr[0], lladdr[1], lladdr[2],
              lladdr[3], lladdr[4], lladdr[5]);
     return buf;

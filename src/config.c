@@ -125,11 +125,13 @@ config_t *read_config(const char *file) {
         goto cleanup; \
     } while (0);
 
+    FILE *fh = NULL;
+
     if (!yaml_parser_initialize(&parser)) {
         PARSE_ERROR("failed to initialize parser!");
     }
 
-    FILE *fh = fopen(file, "r");
+    fh = fopen(file, "r");
     if (fh == NULL) {
         PARSE_ERROR("failed to open configuration file: %s", file);
     }

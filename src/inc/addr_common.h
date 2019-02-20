@@ -13,8 +13,8 @@
 #define MAC_LEN 6
 
 struct addr {
-	uint8_t family;
-	char addr[INET6_ADDRSTRLEN];
+    uint8_t family;
+    char addr[INET6_ADDRSTRLEN];
 };
 
 #endif /* ADDR_COMMON_H_ */

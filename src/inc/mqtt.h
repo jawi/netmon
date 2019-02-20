@@ -13,8 +13,6 @@
 #include "config.h"
 #include "event.h"
 
-#define MAX_PAYLOAD_SIZE 256
-
 #define MAX_TOPIC_NAME_LENGTH 256
 
 typedef struct mqtt_handle mqtt_handle_t;

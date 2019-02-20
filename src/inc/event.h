@@ -30,7 +30,7 @@ typedef struct event {
 
 const char *event_topic_name(event_type_t event_type);
 
-event_t *create_event(event_type_t event_type, char *data);
+event_t *create_event(event_type_t event_type, const char *fmt, ...);
 
 void free_event(event_t *event);
 

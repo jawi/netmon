@@ -8,6 +8,8 @@
 #ifndef LOGGING_H_
 #define LOGGING_H_
 
+#include <stdbool.h>
+
 void init_logging(bool debug, bool foreground);
 void destroy_logging(void);
 
