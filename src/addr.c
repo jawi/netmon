@@ -47,14 +47,9 @@ void destroy_addr(addr_handle_t *handle) {
     free(handle);
 }
 
-static char *format_payload(const addr_info_t *addr) {
-    char *payload = malloc((size_t) MAX_PAYLOAD_SIZE);
-
-    snprintf(payload, MAX_PAYLOAD_SIZE - 1,
-             "time=%lu,idx=%d,addr=%s",
-             time(NULL), addr->index, addr->addr.addr);
-
-    return payload;
+static inline event_t *create_addr_event(event_type_t event_type, addr_info_t *ptr) {
+    return create_event(event_type, "time=%lu,idx=%d,addr=%s",
+                        time(NULL), ptr->index, ptr->addr.addr);
 }
 
 static event_t *add_addr(addr_handle_t *handle, uint32_t index,
@@ -77,7 +72,7 @@ static event_t *add_addr(addr_handle_t *handle, uint32_t index,
         // Found it...
         log_debug("updating existing address (%s @ %d)", addr, index);
 
-        return create_event(ADDRESS_UPDATE, format_payload(ptr));
+        return create_addr_event(ADDRESS_UPDATE, ptr);
     }
 
     assert(ptr == NULL);
@@ -92,7 +87,7 @@ static event_t *add_addr(addr_handle_t *handle, uint32_t index,
 
     log_debug("added new address (%s @ %d)", addr, index);
 
-    return create_event(ADDRESS_ADD, format_payload(ptr));
+    return create_addr_event(ADDRESS_ADD, ptr);
 }
 
 static event_t *del_addr(addr_handle_t *handle, uint32_t index,
@@ -130,7 +125,7 @@ static event_t *del_addr(addr_handle_t *handle, uint32_t index,
 
     log_debug("deleted address (%s @ %d)", addr, index);
 
-    event_t *event = create_event(ADDRESS_DELETE, format_payload(ptr));
+    event_t *event = create_addr_event(ADDRESS_DELETE, ptr);
 
     free(ptr);
 

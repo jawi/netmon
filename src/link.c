@@ -51,21 +51,6 @@ void destroy_link(link_handle_t *handle) {
     free(handle);
 }
 
-static char *format_payload(const link_info_t *link) {
-    char *payload = malloc((size_t) MAX_PAYLOAD_SIZE);
-
-    int len = snprintf(payload, MAX_PAYLOAD_SIZE - 1,
-                       "time=%lu,idx=%d,name=%s,mac=%s",
-                       time(NULL), link->index, link->name, format_mac(link->ll_addr));
-
-    if (link->vlan_id && len < MAX_PAYLOAD_SIZE) {
-        snprintf(payload + len, (size_t) (MAX_PAYLOAD_SIZE - len - 1),
-                 ",vlan=%d", *(link->vlan_id));
-    }
-
-    return payload;
-}
-
 static uint16_t *int16dup(uint16_t *src) {
     if (!src) {
         return NULL;
@@ -73,6 +58,12 @@ static uint16_t *int16dup(uint16_t *src) {
     uint16_t *dst = malloc(sizeof(uint16_t));
     *dst = *src;
     return dst;
+}
+
+static inline event_t *create_link_event(event_type_t event_type, link_info_t *ptr) {
+    return create_event(event_type, "time=%lu,idx=%d,name=%s,mac=%s,vlan=%d",
+                        time(NULL), ptr->index, ptr->name, format_mac(ptr->ll_addr),
+                        ptr->vlan_id ? *(ptr->vlan_id) : 1);
 }
 
 static event_t *add_link(link_handle_t *handle, int index, const char *name,
@@ -94,7 +85,7 @@ static event_t *add_link(link_handle_t *handle, int index, const char *name,
         // Found it...
         log_debug("updating existing link (%s @ %d)", name, index);
 
-        return create_event(LINK_UPDATE, format_payload(ptr));
+        return create_link_event(LINK_UPDATE, ptr);
     }
 
     assert(ptr == NULL);
@@ -110,7 +101,7 @@ static event_t *add_link(link_handle_t *handle, int index, const char *name,
 
     log_debug("added new link (%s @ %d)", name, index);
 
-    return create_event(LINK_ADD, format_payload(ptr));
+    return create_link_event(LINK_ADD, ptr);
 }
 
 static event_t *del_link(link_handle_t *handle, int index, const char *name,
@@ -147,7 +138,7 @@ static event_t *del_link(link_handle_t *handle, int index, const char *name,
 
     log_debug("deleted link (%s @ %d)", name, index);
 
-    event_t *event = create_event(LINK_DELETE, format_payload(ptr));
+    event_t *event = create_link_event(LINK_DELETE, ptr);
 
     free(ptr->name);
     free(ptr->vlan_id);

@@ -71,15 +71,10 @@ static char *format_state(const uint16_t state) {
     }
 }
 
-static char *format_payload(const neighbour_info_t *neigh) {
-    char *payload = malloc((size_t) MAX_PAYLOAD_SIZE);
-
-    snprintf(payload, MAX_PAYLOAD_SIZE - 1,
-             "time=%lu,idx=%d,addr=%s,mac=%s,state=%s",
-             time(NULL), neigh->index, neigh->dst_addr.addr, format_mac(neigh->ll_addr),
-             format_state(neigh->state));
-
-    return payload;
+static inline event_t *create_neigh_event(event_type_t event_type, neighbour_info_t *ptr) {
+    return create_event(event_type, "time=%lu,idx=%d,addr=%s,mac=%s,state=%s",
+                        time(NULL), ptr->index, ptr->dst_addr.addr, format_mac(ptr->ll_addr),
+                        format_state(ptr->state));
 }
 
 static event_t *add_neigh(neigh_handle_t *handle, int index, uint8_t family,
@@ -110,7 +105,7 @@ static event_t *add_neigh(neigh_handle_t *handle, int index, uint8_t family,
         log_debug("updating existing neighbour (%s <=> %s), state = %d vs %d)",
                   dst_ip, format_mac(ll_addr), old_state, state);
 
-        return create_event(NEIGHBOUR_UPDATE, format_payload(ptr));
+        return create_neigh_event(NEIGHBOUR_UPDATE, ptr);
     }
 
     assert(ptr == NULL);
@@ -128,7 +123,7 @@ static event_t *add_neigh(neigh_handle_t *handle, int index, uint8_t family,
     log_debug("added new neighbour (%s <=> %s), state = %d",
               dst_ip, format_mac(ll_addr), state);
 
-    return create_event(NEIGHBOUR_ADD, format_payload(ptr));
+    return create_neigh_event(NEIGHBOUR_ADD, ptr);
 }
 
 static event_t *del_neigh(neigh_handle_t *handle, int index, uint8_t family,
@@ -166,7 +161,7 @@ static event_t *del_neigh(neigh_handle_t *handle, int index, uint8_t family,
 
     log_debug("deleted neighbour (%s <=> %s)", dst_ip, format_mac(ptr->ll_addr));
 
-    event_t *event = create_event(NEIGHBOUR_DELETE, format_payload(ptr));
+    event_t *event = create_neigh_event(NEIGHBOUR_DELETE, ptr);
 
     free(ptr);
 
