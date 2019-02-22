@@ -1,0 +1,19 @@
+{
+    "psi-header.config": {
+        "author": "jawi",
+        "authorEmail": "",
+        "license": "Apache-2.0",
+        "forceToTop": true,
+    },
+    "psi-header.templates": [
+        {
+            "language": "*",
+            "template": [ 
+                "netmon - simple Linux network monitor",
+                "",
+                "Copyright: (C) <<year>> <<author>>",
+                "  License: <<licensename>>",
+            ]
+        }
+    ]
+}

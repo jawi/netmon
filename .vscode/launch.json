@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Netmon Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceRoot}/build/netmon",
+            "args": ["-f", "-d", "-c", "netmon.cfg"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": []
+        }
+    ]
+}
