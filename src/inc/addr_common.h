@@ -1,10 +1,9 @@
 /*
- * addr_common.h
+ * netmon - simple Linux network monitor
  *
- *  Created on: Jan 18, 2019
- *      Author: jawi
+ * Copyright: (C) 2019 jawi
+ *   License: Apache License 2.0
  */
-
 #ifndef ADDR_COMMON_H_
 #define ADDR_COMMON_H_
 

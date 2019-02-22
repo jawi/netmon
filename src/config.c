@@ -1,10 +1,9 @@
 /*
- * config.c
+ * netmon - simple Linux network monitor
  *
- *  Created on: Jan 18, 2019
- *      Author: jawi
+ * Copyright: (C) 2019 jawi
+ *   License: Apache License 2.0
  */
-
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,18 +19,12 @@
 #include "config.h"
 #include "logging.h"
 
-typedef enum parser_state {
-    UNKNOWN_STATE = 0,
-    KEY,
-    VALUE,
-} parser_state_t;
-
 typedef enum config_block {
     ROOT = 0,
     DAEMON,
-    SERVER,
-    AUTH,
-    TLS,
+    MQTT,
+    MQTT_AUTH,
+    MQTT_TLS,
 } config_block_t;
 
 static inline char *safe_strdup(const char *val) {
@@ -107,48 +100,50 @@ static int init_config(config_t *cfg) {
 config_t *read_config(const char *file) {
     config_t *cfg = NULL;
     yaml_parser_t parser;
-    yaml_token_t token;
+    yaml_event_t event;
 
-    parser_state_t pstate = UNKNOWN_STATE;
     config_block_t cblock = ROOT;
+    bool key_expected = false;
 
     int done = 0;
     bool error = false;
     char key[64] = {};
 
-#define KEY_EQUALS(n) (strncmp(key, (n), sizeof(n)) == 0)
-#define IN_BLOCK(b) (cblock == (b))
+#define IN_CONTEXT(b) (cblock == (b))
+#define KEY_IN_CONTEXT(n, b) ((strcmp(key, (n)) == 0) && IN_CONTEXT(b))
+#define VALUE_IN_CONTEXT(n, b) ((strcmp(val, (n)) == 0) && IN_CONTEXT(b))
 #define PARSE_ERROR(...) \
     do { \
         log_error(__VA_ARGS__); \
+        if (event.type != 0) { \
+            log_error("  at line %d, column %d", event.start_mark.line+1, event.start_mark.column+1); \
+        } \
         error = true; \
         goto cleanup; \
     } while (0);
 
-    FILE *fh = NULL;
+    FILE *fh = fopen(file, "r");
+    if (fh == NULL) {
+        PARSE_ERROR("failed to open configuration file: %s", file);
+    }
 
     if (!yaml_parser_initialize(&parser)) {
         PARSE_ERROR("failed to initialize parser!");
-    }
-
-    fh = fopen(file, "r");
-    if (fh == NULL) {
-        PARSE_ERROR("failed to open configuration file: %s", file);
     }
 
     yaml_parser_set_input_file(&parser, fh);
     yaml_parser_set_encoding(&parser, YAML_UTF8_ENCODING);
 
     do {
-        if (!yaml_parser_scan(&parser, &token)) {
-            PARSE_ERROR("failed to parse configuration file: %d", parser.error);
+        if (!yaml_parser_parse(&parser, &event)) {
+            PARSE_ERROR("failed to parse configuration file: %s", parser.problem);
         }
 
-        switch (token.type) {
-        case YAML_STREAM_START_TOKEN: {
+        switch (event.type) {
+        case YAML_STREAM_START_EVENT: {
             cfg = malloc(sizeof(config_t));
             if (cfg == NULL) {
-                PARSE_ERROR("failed to allocate memory!");
+                PARSE_ERROR("failed to allocate memory for configuration");
             }
             // set the defaults...
             if (init_config(cfg)) {
@@ -158,46 +153,45 @@ config_t *read_config(const char *file) {
 
             break;
         }
-        case YAML_STREAM_END_TOKEN:
+        case YAML_STREAM_END_EVENT:
             done = 1;
             break;
 
-        case YAML_KEY_TOKEN:
-            pstate = KEY;
+        case YAML_DOCUMENT_START_EVENT:
+        case YAML_DOCUMENT_END_EVENT:
+            // nop
             break;
 
-        case YAML_VALUE_TOKEN:
-            pstate = VALUE;
+        case YAML_MAPPING_START_EVENT:
+            key_expected = true;
             break;
 
-        case YAML_BLOCK_END_TOKEN:
-            cblock = ROOT;
-            break;
-
-        case YAML_BLOCK_MAPPING_START_TOKEN:
-            if (KEY_EQUALS("")) {
-                cblock = ROOT;
-            } else if (KEY_EQUALS("daemon")) {
-                cblock = DAEMON;
-            } else if (KEY_EQUALS("server")) {
-                cblock = SERVER;
-            } else if (KEY_EQUALS("auth")) {
-                cblock = AUTH;
-            } else if (KEY_EQUALS("tls")) {
-                cblock = TLS;
+        case YAML_MAPPING_END_EVENT:
+            if (IN_CONTEXT(MQTT_AUTH) || IN_CONTEXT(MQTT_TLS)) {
+                cblock = MQTT;
             } else {
-                PARSE_ERROR("unknown/unhandled configuration block: %s", key);
+                cblock = ROOT;
             }
             break;
-        case YAML_SCALAR_TOKEN: {
-            size_t len = token.data.scalar.length;
-            const char *val = (const char *)token.data.scalar.value;
 
-            if (pstate == KEY) {
+        case YAML_SCALAR_EVENT: {
+            size_t len = event.data.scalar.length;
+            const char *val = (char *)event.data.scalar.value;
+
+            if (VALUE_IN_CONTEXT("daemon", ROOT)) {
+                cblock = DAEMON;
+            } else if (VALUE_IN_CONTEXT("mqtt", ROOT)) {
+                cblock = MQTT;
+            } else if (VALUE_IN_CONTEXT("auth", MQTT)) {
+                cblock = MQTT_AUTH;
+            } else if (VALUE_IN_CONTEXT("tls", MQTT)) {
+                cblock = MQTT_TLS;
+            } else if (key_expected) {
                 strncpy(key, val, len);
                 key[len] = 0;
-            } else if (pstate == VALUE) {
-                if (IN_BLOCK(DAEMON) && KEY_EQUALS("user")) {
+                key_expected = false;
+            } else {
+                if (KEY_IN_CONTEXT("user", DAEMON)) {
                     struct passwd *pwd = getpwnam(val);
                     if (pwd) {
                         cfg->priv_user = pwd->pw_uid;
@@ -205,71 +199,73 @@ config_t *read_config(const char *file) {
                     } else {
                         PARSE_ERROR("invalid configuration file: unknown user '%s'", val);
                     }
-                } else if (IN_BLOCK(DAEMON) && KEY_EQUALS("group")) {
+                } else if (KEY_IN_CONTEXT("group", DAEMON)) {
                     struct group *grp = getgrnam(val);
                     if (grp) {
                         cfg->priv_group = grp->gr_gid;
                     } else {
                         PARSE_ERROR("invalid configuriation file: unknown group '%s'", val);
                     }
-                } else if (IN_BLOCK(SERVER) && KEY_EQUALS("client_id")) {
+                } else if (KEY_IN_CONTEXT("client_id", MQTT)) {
                     cfg->client_id = safe_strdup(val);
-                } else if (IN_BLOCK(SERVER) && KEY_EQUALS("host")) {
+                } else if (KEY_IN_CONTEXT("host", MQTT)) {
                     cfg->host = safe_strdup(val);
-                } else if (IN_BLOCK(SERVER) && KEY_EQUALS("port")) {
+                } else if (KEY_IN_CONTEXT("port", MQTT)) {
                     int32_t n = safe_atoi(val);
                     if (n < 1 || n > 65535) {
                         PARSE_ERROR("invalid server port: %s. Use a port between 1 and 65535!", val);
                     }
                     cfg->port = (uint16_t) n;
-                } else if (IN_BLOCK(SERVER) && KEY_EQUALS("qos")) {
+                } else if (KEY_IN_CONTEXT("qos", MQTT)) {
                     int32_t n = safe_atoi(val);
                     if (n < 0 || n > 2) {
                         PARSE_ERROR("invalid QoS value: %s. Use 0, 1 or 2 as value!", val);
                     }
                     cfg->qos = (uint8_t) n;
-                } else if (IN_BLOCK(SERVER) && KEY_EQUALS("retain")) {
+                } else if (KEY_IN_CONTEXT("retain", MQTT)) {
                     cfg->retain = safe_atob(val);
-                } else if (IN_BLOCK(AUTH) && KEY_EQUALS("username")) {
+                } else if (KEY_IN_CONTEXT("username", MQTT_AUTH)) {
                     cfg->username = safe_strdup(val);
                     cfg->use_auth = true;
-                } else if (IN_BLOCK(AUTH) && KEY_EQUALS("password")) {
+                } else if (KEY_IN_CONTEXT("password", MQTT_AUTH)) {
                     cfg->password = safe_strdup(val);
                     cfg->use_auth = true;
-                } else if (IN_BLOCK(TLS) && KEY_EQUALS("ca_cert_path")) {
+                } else if (KEY_IN_CONTEXT("ca_cert_path", MQTT_TLS)) {
                     cfg->cacertpath = safe_strdup(val);
                     cfg->use_tls = true;
-                } else if (IN_BLOCK(TLS) && KEY_EQUALS("ca_cert_file")) {
+                } else if (KEY_IN_CONTEXT("ca_cert_file", MQTT_TLS)) {
                     cfg->cacertfile = safe_strdup(val);
                     cfg->use_tls = true;
-                } else if (IN_BLOCK(TLS) && KEY_EQUALS("cert_file")) {
+                } else if (KEY_IN_CONTEXT("cert_file", MQTT_TLS)) {
                     cfg->certfile = safe_strdup(val);
                     cfg->use_tls = true;
-                } else if (IN_BLOCK(TLS) && KEY_EQUALS("key_file")) {
+                } else if (KEY_IN_CONTEXT("key_file", MQTT_TLS)) {
                     cfg->keyfile = safe_strdup(val);
                     cfg->use_tls = true;
-                } else if (IN_BLOCK(TLS) && KEY_EQUALS("tls_version")) {
-                    cfg->tls_version = safe_strdup(val);
-                    cfg->use_tls = true;
-                } else if (IN_BLOCK(TLS) && KEY_EQUALS("ciphers")) {
-                    cfg->ciphers = safe_strdup(val);
-                    cfg->use_tls = true;
-                } else if (IN_BLOCK(TLS) && KEY_EQUALS("verify_peer")) {
+                } else if (KEY_IN_CONTEXT("verify_peer", MQTT_TLS)) {
                     cfg->verify_peer = safe_atob(val);
                     cfg->use_tls = true;
+                } else if (KEY_IN_CONTEXT("tls_version", MQTT_TLS)) {
+                    cfg->tls_version = safe_strdup(val);
+                    cfg->use_tls = true;
+                } else if (KEY_IN_CONTEXT("ciphers", MQTT_TLS)) {
+                    cfg->ciphers = safe_strdup(val);
+                    cfg->use_tls = true;
                 } else {
-                    PARSE_ERROR("invalid configuration key/value in block %d: %s => %s", cblock, key, val);
+                    PARSE_ERROR("unexpected key/value %s => %s", key, val);
                 }
+
+                key_expected = true;
             }
 
             break;
         }
 
         default:
-            PARSE_ERROR("invalid configuration file: unexpected token (id = %d)", token.type);
+            PARSE_ERROR("invalid configuration file: unexpected construct");
         }
 
-        yaml_token_delete(&token);
+        yaml_event_delete(&event);
     } while (!done);
 
     if (!cfg->client_id) {
@@ -315,7 +311,7 @@ cleanup:
         cfg = NULL;
     }
 
-    yaml_token_delete(&token);
+    yaml_event_delete(&event);
     yaml_parser_delete(&parser);
 
     if (fh) {

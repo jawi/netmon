@@ -1,10 +1,9 @@
 /*
- * util.c
+ * netmon - simple Linux network monitor
  *
- *  Created on: Jan 13, 2019
- *      Author: jawi
+ * Copyright: (C) 2019 jawi
+ *   License: Apache License 2.0
  */
-
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
