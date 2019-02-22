@@ -1,10 +1,9 @@
 /*
- * event.h
+ * netmon - simple Linux network monitor
  *
- *  Created on: Jan 19, 2019
- *      Author: jawi
+ * Copyright: (C) 2019 jawi
+ *   License: Apache License 2.0
  */
-
 #ifndef EVENT_H_
 #define EVENT_H_
 

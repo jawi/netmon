@@ -1,3 +1,9 @@
+/*
+ * netmon - simple Linux network monitor
+ *
+ * Copyright: (C) 2019 jawi
+ *   License: Apache License 2.0
+ */
 #include <assert.h>
 #include <errno.h>
 #include <netinet/in.h>

@@ -1,5 +1,9 @@
-// netmon - minimal netlink based network monitor.
-
+/*
+ * netmon - simple Linux network monitor
+ *
+ * Copyright: (C) 2019 jawi
+ *   License: Apache License 2.0
+ */
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
