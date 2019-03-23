@@ -17,8 +17,6 @@ typedef struct config {
     char *client_id;
     char *host;
     uint16_t port;
-    uint8_t qos;
-    bool retain;
 
     bool use_tls;
     bool use_auth;
@@ -26,7 +24,6 @@ typedef struct config {
     char *username;
     char *password;
 
-    char *cacertpath;
     char *cacertfile;
     char *certfile;
     char *keyfile;

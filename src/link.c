@@ -15,20 +15,17 @@
 #include <linux/rtnetlink.h>
 
 #include "addr_common.h"
-#include "event.h"
 #include "link.h"
-#include "mqtt.h"
 #include "logging.h"
 #include "util.h"
 #include "mnl_extra.h"
 
-typedef struct link_info {
-    int index;
-    char *name;
-    uint8_t ll_addr[MAC_LEN];
-    uint16_t *vlan_id;
-    struct link_info *next;
-} link_info_t;
+typedef struct link_info link_info_t;
+
+struct link_info {
+    link_t link;
+    link_info_t *next;
+};
 
 struct link_handle {
     link_info_t *links;
@@ -48,8 +45,8 @@ void destroy_link(link_handle_t *handle) {
     while (ptr != NULL) {
         link_info_t *old = ptr;
         ptr = ptr->next;
-        free(old->name);
-        free(old->vlan_id);
+        free(old->link.name);
+        free(old->link.vlan_id);
         free(old);
     }
 
@@ -66,63 +63,57 @@ static uint16_t *int16dup(uint16_t *src) {
     return dst;
 }
 
-static inline event_t *create_link_event(event_type_t event_type, link_info_t *ptr) {
-    return create_event(event_type, "time=%lu,idx=%d,name=%s,mac=%s,vlan=%d",
-                        time(NULL), ptr->index, ptr->name, format_mac(ptr->ll_addr),
-                        ptr->vlan_id ? *(ptr->vlan_id) : 1);
-}
-
-static event_t *add_link(link_handle_t *handle, int index, const char *name,
-                         uint8_t ll_addr[MAC_LEN], uint16_t *vlan_id) {
+static void add_link(link_handle_t *handle, int32_t index, const char *name,
+                     uint8_t ll_addr[MAC_LEN], uint16_t *vlan_id) {
     link_info_t *ptr = NULL;
 
     // Look whether we already have it in our list...
     for (ptr = handle->links; ptr; ptr = ptr->next) {
-        if (ptr->index != index) {
+        const link_t ptr_link = ptr->link;
+        if (ptr_link.index != index) {
             continue;
         }
-        if (memcmp(ptr->name, name, strlen(ptr->name)) != 0) {
+        if (memcmp(ptr_link.name, name, strlen(ptr_link.name)) != 0) {
             continue;
         }
-        if (memcmp(ptr->ll_addr, ll_addr, MAC_LEN) != 0) {
+        if (memcmp(ptr_link.ll_addr, ll_addr, MAC_LEN) != 0) {
             continue;
         }
 
         // Found it...
         log_debug("updating existing link (%s @ %d)", name, index);
 
-        return create_link_event(LINK_UPDATE, ptr);
+        return;
     }
 
     assert(ptr == NULL);
 
     ptr = malloc(sizeof(link_info_t));
-    ptr->index = index;
-    ptr->name = strdup(name);
-    ptr->vlan_id = int16dup(vlan_id);
-    memcpy(ptr->ll_addr, ll_addr, MAC_LEN);
+    ptr->link.index = index;
+    ptr->link.name = strdup(name);
+    ptr->link.vlan_id = int16dup(vlan_id);
+    memcpy(ptr->link.ll_addr, ll_addr, MAC_LEN);
     ptr->next = handle->links;
 
     handle->links = ptr;
 
     log_debug("added new link (%s @ %d)", name, index);
-
-    return create_link_event(LINK_ADD, ptr);
 }
 
-static event_t *del_link(link_handle_t *handle, int index, const char *name,
-                         uint8_t ll_addr[MAC_LEN]) {
+static void del_link(link_handle_t *handle, int32_t index, const char *name,
+                     uint8_t ll_addr[MAC_LEN]) {
     link_info_t *ptr = NULL, *prev = NULL;
 
     // Look whether we already have it in our list...
     for (ptr = handle->links; ptr; prev = ptr, ptr = ptr->next) {
-        if (ptr->index != index) {
+        const link_t ptr_link = ptr->link;
+        if (ptr_link.index != index) {
             continue;
         }
-        if (memcmp(ptr->name, name, strlen(ptr->name)) != 0) {
+        if (memcmp(ptr_link.name, name, strlen(ptr_link.name)) != 0) {
             continue;
         }
-        if (memcmp(ptr->ll_addr, ll_addr, MAC_LEN) != 0) {
+        if (memcmp(ptr_link.ll_addr, ll_addr, MAC_LEN) != 0) {
             continue;
         }
         // Found it...
@@ -131,7 +122,7 @@ static event_t *del_link(link_handle_t *handle, int index, const char *name,
 
     if (ptr == NULL) {
         log_debug("not deleting unknown link (%s @ %d)", name, index);
-        return NULL;
+        return;
     }
 
     if (prev != NULL) {
@@ -144,13 +135,9 @@ static event_t *del_link(link_handle_t *handle, int index, const char *name,
 
     log_debug("deleted link (%s @ %d)", name, index);
 
-    event_t *event = create_link_event(LINK_DELETE, ptr);
-
-    free(ptr->name);
-    free(ptr->vlan_id);
+    free(ptr->link.name);
+    free(ptr->link.vlan_id);
     free(ptr);
-
-    return event;
 }
 
 static int vlan_data_attr_cb(const struct nlattr *attr, void *data) {
@@ -224,7 +211,37 @@ static int link_data_attr_cb(const struct nlattr *attr, void *data) {
     return MNL_CB_OK;
 }
 
-event_t *update_link(link_handle_t *handle, const struct nlmsghdr *nlh, int *result) {
+void free_link(link_t *link) {
+    if (link) {
+        free(link->name);
+        free(link->vlan_id);
+        memset(link->ll_addr, 0, sizeof(link->ll_addr));
+        free(link);
+    }
+}
+
+link_t *get_link(link_handle_t *handle, int32_t index) {
+    link_info_t *ptr = handle->links;
+
+    while (ptr != NULL) {
+        const link_t ptr_link = ptr->link;
+        if (ptr_link.index != index) {
+            ptr = ptr->next;
+            continue;
+        }
+
+        // Found it, return a copy of the link data...
+        link_t *result = malloc(sizeof(link_t));
+        result->name = strdup(ptr_link.name);
+        result->vlan_id = int16dup(ptr_link.vlan_id);
+        memcpy(result->ll_addr, ptr_link.ll_addr, sizeof(ptr_link.ll_addr));
+        return result;
+    }
+
+    return NULL;
+}
+
+void update_link(link_handle_t *handle, const struct nlmsghdr *nlh, int *result) {
     struct nlattr *tb[IFLA_MAX + 1] = { 0 };
     struct ifinfomsg *ifm = mnl_nlmsg_get_payload(nlh);
 
@@ -232,7 +249,7 @@ event_t *update_link(link_handle_t *handle, const struct nlmsghdr *nlh, int *res
 
     if (ifm->ifi_flags & IFF_LOOPBACK) {
         // Skip loopback interfaces...
-        return NULL;
+        return;
     }
 
     const char *name = NULL;
@@ -249,7 +266,7 @@ event_t *update_link(link_handle_t *handle, const struct nlmsghdr *nlh, int *res
         if (!memcpy(&ll_addr, hwaddr, MAC_LEN)) {
             perror("memcpy");
             *result = MNL_CB_ERROR;
-            return NULL;
+            return;
         }
     }
 
@@ -274,12 +291,10 @@ event_t *update_link(link_handle_t *handle, const struct nlmsghdr *nlh, int *res
 
     const uint16_t type = nlh->nlmsg_type;
     if (type == RTM_NEWLINK) {
-        return add_link(handle, ifm->ifi_index, name, ll_addr, vlan_id);
+        add_link(handle, (int32_t) ifm->ifi_index, name, ll_addr, vlan_id);
     } else if (type == RTM_DELLINK) {
-        return del_link(handle, ifm->ifi_index, name, ll_addr);
+        del_link(handle, (int32_t) ifm->ifi_index, name, ll_addr);
     } else {
         log_warning("unsupported link_type = %02d!\n", type);
     }
-
-    return NULL;
 }

@@ -65,20 +65,29 @@ static int netlink_data_cb(const struct nlmsghdr *nlh, void *data) {
     const uint16_t type = nlh->nlmsg_type;
 
     int ret = MNL_CB_OK;
-    event_t *event = NULL;
 
-    if (type == RTM_NEWLINK || type == RTM_DELLINK || type == RTM_GETLINK) {
-        event = update_link(handle->link, nlh, &ret);
-    } else if (type == RTM_NEWADDR || type == RTM_DELADDR || type == RTM_GETADDR) {
-        event = update_addr(handle->addr, nlh, &ret);
-    } else if (type == RTM_NEWNEIGH || type == RTM_DELNEIGH || type == RTM_GETNEIGH) {
-        event = update_neigh(handle->neigh, nlh, &ret);
+    if (type == RTM_NEWLINK || type == RTM_DELLINK) {
+        update_link(handle->link, nlh, &ret);
+    } else if (type == RTM_NEWADDR || type == RTM_DELADDR) {
+        update_addr(handle->addr, nlh, &ret);
+    } else if (type == RTM_NEWNEIGH || type == RTM_DELNEIGH) {
+        neigh_t *neigh = update_neigh(handle->neigh, nlh, &ret);
+        if (neigh) {
+            addr_t *addr = get_addr(handle->addr, neigh->index);
+            link_t *link = get_link(handle->link, neigh->index);
+
+            event_t *event = create_event(NEIGHBOUR_UPDATE, addr, link, neigh);
+
+            if (event) {
+                (handle->callback)(event);
+            }
+
+            free_addr(addr);
+            free_link(link);
+        }
+        free(neigh);
     } else {
-        log_warning("Unhandled type: %02d", type);
-    }
-
-    if (event) {
-        (handle->callback)(event);
+        log_warning("Unhandled netlink message with type: %02d", type);
     }
 
     return ret;

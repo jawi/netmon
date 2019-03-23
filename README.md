@@ -1,8 +1,7 @@
 # netmon
 
-netmon is a small utility that listens for changes in network addresses, links
-and neighbours using Netlink and dispatches events on MQTT for each of these 
-changes.
+netmon is a small utility that listens for changes in neighbours using Netlink
+and dispatches events on NATS for each of these changes.
 
 ## Usage
 
@@ -39,47 +38,43 @@ daemon:
    # Defaults to "nobody".
    group: nogroup
 
-mqtt:
-   # Denotes how the MQTT client identifies itself to the MQTT broker.
+nats:
+   # Denotes how the netmon identifies itself to the NATS server.
    # Defaults to netmon.
    client_id: netmon_zeus
-   # The hostname or IP address of the MQTT broker
+   # The hostname or IP address of the NATS server
    # Defaults to localhost.
    host: localhost
-   # The port of the MQTT broker, use 8883 for TLS connections.
-   # Defaults to 1883, or 8883 if TLS settings are defined.
-   port: 1883
+   # The port of the NATS server.
+   # Defaults to 4222.
+   port: 4222
    # Denotes what quality of service to use: 
    #   0 = at most once, 1 = at lease once, 2 = exactly once.
    # Defaults to 1.
    qos: 1
-   # Whether or not the MQTT broker should retain messages for 
+   # Whether or not the NATS server should retain messages for 
    # future subscribers. Defaults to true.
    retain: true
 
    auth:
-      # The username to authenticate against the MQTT broker. By default,
+      # The username to authenticate against the NATS server. By default,
       # no authentication is used.
       username: foo
-      # The password to authenticate against the MQTT broker. By default,
+      # The password to authenticate against the NATS server. By default,
       # no authentication is used.
       password: bar
 
    tls:
-      # The path to the CA certificates. Either this setting *or* the
-      # 'ca_cert_file' setting should be given to enable TLS connections!
-      # By default, no path is defined.
-      ca_cert_path: /etc/ssl/certs
       # The CA certificate file, encoded in PEM format.
       # By default, no file is defined.
-      ca_cert_file: /etc/ssl/ca.pem
+      ca_cert_file: /etc/ssl/certs/ca.pem
       # The client certificate file, encoded in PEM format.
       # By default, no file is defined.
       cert_file: netmon.crt
       # The client private key file, encoded in PEM format.
       # By default, no file is defined.
       key_file: netmon.key
-      # Whether or not the identity of the MQTT broker should be verified.
+      # Whether or not the identity of the NATS server should be verified.
       # use with case: only disable this setting when debugging TLS 
       # connection problems! Defaults to true.
       verify_peer: yes
@@ -90,7 +85,7 @@ mqtt:
       # What TLS ciphers should be used for the TLS connection.
       # Defaults to an empty string, denoting that the default ciphers
       # of the SSL library should be used.
-      ciphers: "!NULL"
+      ciphers: "TLSv1.2"
 
 ###EOF###
 ```
@@ -102,11 +97,11 @@ mqtt:
 Netmon requires the following build dependencies:
 
 - libmnl (1.0.4 or later);
-- libmosquitto (1.5.5 or later);
+- cnats (1.8.0 or later);
+- libprotobuf-c-dev (1.2.0 or later);
 - libyaml (0.2.1 or later).
 
-In addition, you need to compile it with a compiler that supports PTHREADS, 
-such as GCC or Clang.
+In addition, you a libc implementation that supports PTHREADS, such as glibc.
 
 Since netlink functionality is used, netmon will only compile under Linux.
 

@@ -4,7 +4,7 @@ TARGET_EXEC = netmon
 
 BUILD_DIR = build
 SRC_DIRS = src
-INC_DIRS = src/inc
+INC_DIRS = src/inc /usr/local/include
 
 SRCS := $(shell find $(SRC_DIRS) -name '*.cpp' -or -name '*.c' -or -name '*.s')
 OBJS := $(SRCS:%=$(BUILD_DIR)/%.o)
@@ -14,7 +14,7 @@ INC_FLAGS := $(addprefix -I,$(INC_DIRS))
 
 CFLAGS += -Wall -Wstrict-prototypes -Wmissing-prototypes -Wshadow -Wconversion
 CPPFLAGS += $(INC_FLAGS) -MMD -MP
-LDFLAGS = -lmnl -lmosquitto -pthread -lyaml
+LDFLAGS = -lmnl -lnats -pthread -lyaml
 
 all: $(BUILD_DIR)/$(TARGET_EXEC)
 

@@ -16,17 +16,16 @@
 
 #include "addr_common.h"
 #include "addr.h"
-#include "event.h"
 #include "logging.h"
-#include "mqtt.h"
 #include "mnl_extra.h"
 #include "util.h"
 
-typedef struct addr_info {
-    uint32_t index;
-    struct addr addr;
-    struct addr_info *next;
-} addr_info_t;
+typedef struct addr_info addr_info_t;
+
+struct addr_info {
+    addr_t addr;
+    addr_info_t *next;
+};
 
 struct addr_handle {
     addr_info_t *addresses;
@@ -53,21 +52,16 @@ void destroy_addr(addr_handle_t *handle) {
     free(handle);
 }
 
-static inline event_t *create_addr_event(event_type_t event_type, addr_info_t *ptr) {
-    return create_event(event_type, "time=%lu,idx=%d,addr=%s",
-                        time(NULL), ptr->index, ptr->addr.addr);
-}
-
-static event_t *add_addr(addr_handle_t *handle, uint32_t index,
-                         uint8_t family, char addr[INET6_ADDRSTRLEN]) {
+static void add_addr(addr_handle_t *handle, int32_t index,
+                     uint8_t family, char addr[INET6_ADDRSTRLEN]) {
     addr_info_t *ptr = NULL;
 
     // Look whether we already have it in our list...
     for (ptr = handle->addresses; ptr; ptr = ptr->next) {
-        if (ptr->index != index) {
+        const addr_t ptr_addr = ptr->addr;
+        if (ptr_addr.index != index) {
             continue;
         }
-        const struct addr ptr_addr = ptr->addr;
         if (ptr_addr.family != family) {
             continue;
         }
@@ -78,13 +72,13 @@ static event_t *add_addr(addr_handle_t *handle, uint32_t index,
         // Found it...
         log_debug("updating existing address (%s @ %d)", addr, index);
 
-        return create_addr_event(ADDRESS_UPDATE, ptr);
+        return;
     }
 
     assert(ptr == NULL);
 
     ptr = malloc(sizeof(addr_info_t));
-    ptr->index = index;
+    ptr->addr.index = index;
     ptr->addr.family = family;
     memcpy(ptr->addr.addr, addr, INET6_ADDRSTRLEN);
     ptr->next = handle->addresses;
@@ -92,20 +86,18 @@ static event_t *add_addr(addr_handle_t *handle, uint32_t index,
     handle->addresses = ptr;
 
     log_debug("added new address (%s @ %d)", addr, index);
-
-    return create_addr_event(ADDRESS_ADD, ptr);
 }
 
-static event_t *del_addr(addr_handle_t *handle, uint32_t index,
-                         uint8_t family, char addr[INET6_ADDRSTRLEN]) {
+static void del_addr(addr_handle_t *handle, int32_t index,
+                     uint8_t family, char addr[INET6_ADDRSTRLEN]) {
     addr_info_t *ptr = NULL, *prev = NULL;
 
     // Look whether we already have it in our list...
     for (ptr = handle->addresses; ptr; prev = ptr, ptr = ptr->next) {
-        if (ptr->index != index) {
+        const addr_t ptr_addr = ptr->addr;
+        if (ptr_addr.index != index) {
             continue;
         }
-        const struct addr ptr_addr = ptr->addr;
         if (ptr_addr.family != family) {
             continue;
         }
@@ -118,7 +110,7 @@ static event_t *del_addr(addr_handle_t *handle, uint32_t index,
 
     if (ptr == NULL) {
         log_debug("not deleting unknown address (%s @ %d)", addr, index);
-        return NULL;
+        return;
     }
 
     if (prev != NULL) {
@@ -131,11 +123,7 @@ static event_t *del_addr(addr_handle_t *handle, uint32_t index,
 
     log_debug("deleted address (%s @ %d)", addr, index);
 
-    event_t *event = create_addr_event(ADDRESS_DELETE, ptr);
-
     free(ptr);
-
-    return event;
 }
 
 static int addr_data_attr_cb(const struct nlattr *attr, void *data) {
@@ -155,7 +143,36 @@ static int addr_data_attr_cb(const struct nlattr *attr, void *data) {
     return MNL_CB_OK;
 }
 
-event_t *update_addr(addr_handle_t *handle, const struct nlmsghdr *nlh, int *result) {
+void free_addr(addr_t *addr) {
+    if (addr) {
+        memset(addr->addr, 0, sizeof(addr->addr));
+
+        free(addr);
+    }
+}
+
+addr_t *get_addr(addr_handle_t *handle, int32_t index) {
+    addr_info_t *ptr = handle->addresses;
+
+    while (ptr != NULL) {
+        const addr_t ptr_addr = ptr->addr;
+        if (ptr_addr.index != index) {
+            ptr = ptr->next;
+            continue;
+        }
+
+        // Found it, return a copy of the address data...
+        addr_t *result = malloc(sizeof(addr_t));
+        memcpy(result->addr, ptr_addr.addr, sizeof(ptr_addr.addr));
+        result->family = ptr_addr.family;
+        result->index = ptr_addr.index;
+        return result;
+    }
+
+    return NULL;
+}
+
+void update_addr(addr_handle_t *handle, const struct nlmsghdr *nlh, int *result) {
     struct nlattr *tb[IFA_MAX + 1] = { 0 };
     struct ifaddrmsg *ifa = mnl_nlmsg_get_payload(nlh);
 
@@ -163,7 +180,7 @@ event_t *update_addr(addr_handle_t *handle, const struct nlmsghdr *nlh, int *res
 
     if (ifa->ifa_scope != 0) {
         // Only global scope addresses...
-        return NULL;
+        return;
     }
 
     mnl_attr_parse(nlh, sizeof(*ifa), addr_data_attr_cb, tb);
@@ -175,18 +192,16 @@ event_t *update_addr(addr_handle_t *handle, const struct nlmsghdr *nlh, int *res
         if (!inet_ntop(ifa->ifa_family, attr_data, addr, sizeof(addr))) {
             perror("inet_ntop");
             *result = MNL_CB_ERROR;
-            return NULL;
+            return;
         }
 
         const uint16_t type = nlh->nlmsg_type;
         if (type == RTM_NEWADDR) {
-            return add_addr(handle, ifa->ifa_index, ifa->ifa_family, addr);
+            add_addr(handle, (int32_t) ifa->ifa_index, ifa->ifa_family, addr);
         } else if (type == RTM_DELADDR) {
-            return del_addr(handle, ifa->ifa_index, ifa->ifa_family, addr);
+            del_addr(handle, (int32_t) ifa->ifa_index, ifa->ifa_family, addr);
         } else {
             log_warning("unsupported addr_type = %02d!", type);
         }
     }
-
-    return NULL;
 }

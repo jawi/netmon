@@ -8,11 +8,9 @@
 #define NETMON_H_
 
 #define PNAME "netmon"
-#define VERSION "0.9.4"
+#define VERSION "1.0.0"
 
 #define PID_FILE "/run/" PNAME ".pid"
 #define CONF_FILE "/etc/" PNAME ".cfg"
-
-#define TOPIC_PREFIX "netmon/"
 
 #endif /* NETMON_H_ */

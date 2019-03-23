@@ -22,9 +22,9 @@
 typedef enum config_block {
     ROOT = 0,
     DAEMON,
-    MQTT,
-    MQTT_AUTH,
-    MQTT_TLS,
+    NATS,
+    NATS_AUTH,
+    NATS_TLS,
 } config_block_t;
 
 static inline char *safe_strdup(const char *val) {
@@ -73,8 +73,6 @@ static int init_config(config_t *cfg) {
     cfg->client_id = NULL;
     cfg->host = NULL;
     cfg->port = 0;
-    cfg->qos = 1;
-    cfg->retain = false;
 
     cfg->use_auth = false;
     cfg->use_tls = false;
@@ -82,7 +80,6 @@ static int init_config(config_t *cfg) {
     cfg->username = NULL;
     cfg->password = NULL;
 
-    cfg->cacertpath = NULL;
     cfg->cacertfile = NULL;
     cfg->certfile = NULL;
     cfg->keyfile = NULL;
@@ -167,8 +164,8 @@ config_t *read_config(const char *file) {
             break;
 
         case YAML_MAPPING_END_EVENT:
-            if (IN_CONTEXT(MQTT_AUTH) || IN_CONTEXT(MQTT_TLS)) {
-                cblock = MQTT;
+            if (IN_CONTEXT(NATS_AUTH) || IN_CONTEXT(NATS_TLS)) {
+                cblock = NATS;
             } else {
                 cblock = ROOT;
             }
@@ -180,12 +177,12 @@ config_t *read_config(const char *file) {
 
             if (VALUE_IN_CONTEXT("daemon", ROOT)) {
                 cblock = DAEMON;
-            } else if (VALUE_IN_CONTEXT("mqtt", ROOT)) {
-                cblock = MQTT;
-            } else if (VALUE_IN_CONTEXT("auth", MQTT)) {
-                cblock = MQTT_AUTH;
-            } else if (VALUE_IN_CONTEXT("tls", MQTT)) {
-                cblock = MQTT_TLS;
+            } else if (VALUE_IN_CONTEXT("nats", ROOT)) {
+                cblock = NATS;
+            } else if (VALUE_IN_CONTEXT("auth", NATS)) {
+                cblock = NATS_AUTH;
+            } else if (VALUE_IN_CONTEXT("tls", NATS)) {
+                cblock = NATS_TLS;
             } else if (key_expected) {
                 strncpy(key, val, len);
                 key[len] = 0;
@@ -206,49 +203,38 @@ config_t *read_config(const char *file) {
                     } else {
                         PARSE_ERROR("invalid configuriation file: unknown group '%s'", val);
                     }
-                } else if (KEY_IN_CONTEXT("client_id", MQTT)) {
+                } else if (KEY_IN_CONTEXT("client_id", NATS)) {
                     cfg->client_id = safe_strdup(val);
-                } else if (KEY_IN_CONTEXT("host", MQTT)) {
+                } else if (KEY_IN_CONTEXT("host", NATS)) {
                     cfg->host = safe_strdup(val);
-                } else if (KEY_IN_CONTEXT("port", MQTT)) {
+                } else if (KEY_IN_CONTEXT("port", NATS)) {
                     int32_t n = safe_atoi(val);
                     if (n < 1 || n > 65535) {
                         PARSE_ERROR("invalid server port: %s. Use a port between 1 and 65535!", val);
                     }
                     cfg->port = (uint16_t) n;
-                } else if (KEY_IN_CONTEXT("qos", MQTT)) {
-                    int32_t n = safe_atoi(val);
-                    if (n < 0 || n > 2) {
-                        PARSE_ERROR("invalid QoS value: %s. Use 0, 1 or 2 as value!", val);
-                    }
-                    cfg->qos = (uint8_t) n;
-                } else if (KEY_IN_CONTEXT("retain", MQTT)) {
-                    cfg->retain = safe_atob(val);
-                } else if (KEY_IN_CONTEXT("username", MQTT_AUTH)) {
+                } else if (KEY_IN_CONTEXT("username", NATS_AUTH)) {
                     cfg->username = safe_strdup(val);
                     cfg->use_auth = true;
-                } else if (KEY_IN_CONTEXT("password", MQTT_AUTH)) {
+                } else if (KEY_IN_CONTEXT("password", NATS_AUTH)) {
                     cfg->password = safe_strdup(val);
                     cfg->use_auth = true;
-                } else if (KEY_IN_CONTEXT("ca_cert_path", MQTT_TLS)) {
-                    cfg->cacertpath = safe_strdup(val);
-                    cfg->use_tls = true;
-                } else if (KEY_IN_CONTEXT("ca_cert_file", MQTT_TLS)) {
+                } else if (KEY_IN_CONTEXT("ca_cert_file", NATS_TLS)) {
                     cfg->cacertfile = safe_strdup(val);
                     cfg->use_tls = true;
-                } else if (KEY_IN_CONTEXT("cert_file", MQTT_TLS)) {
+                } else if (KEY_IN_CONTEXT("cert_file", NATS_TLS)) {
                     cfg->certfile = safe_strdup(val);
                     cfg->use_tls = true;
-                } else if (KEY_IN_CONTEXT("key_file", MQTT_TLS)) {
+                } else if (KEY_IN_CONTEXT("key_file", NATS_TLS)) {
                     cfg->keyfile = safe_strdup(val);
                     cfg->use_tls = true;
-                } else if (KEY_IN_CONTEXT("verify_peer", MQTT_TLS)) {
+                } else if (KEY_IN_CONTEXT("verify_peer", NATS_TLS)) {
                     cfg->verify_peer = safe_atob(val);
                     cfg->use_tls = true;
-                } else if (KEY_IN_CONTEXT("tls_version", MQTT_TLS)) {
+                } else if (KEY_IN_CONTEXT("tls_version", NATS_TLS)) {
                     cfg->tls_version = safe_strdup(val);
                     cfg->use_tls = true;
-                } else if (KEY_IN_CONTEXT("ciphers", MQTT_TLS)) {
+                } else if (KEY_IN_CONTEXT("ciphers", NATS_TLS)) {
                     cfg->ciphers = safe_strdup(val);
                     cfg->use_tls = true;
                 } else {
@@ -275,7 +261,7 @@ config_t *read_config(const char *file) {
         cfg->host = strdup("localhost");
     }
     if (!cfg->port) {
-        cfg->port = (cfg->use_tls) ? 8883 : 1883;
+        cfg->port = 4222;
     }
 
     // Do some additional validations...
@@ -290,8 +276,8 @@ config_t *read_config(const char *file) {
             cfg->tls_version = strdup("tlsv1.2");
         }
 
-        if (!cfg->cacertpath && !cfg->cacertfile) {
-            PARSE_ERROR("need either ca_cert_path or ca_cert_file to be set!");
+        if (!cfg->cacertfile) {
+            PARSE_ERROR("need ca_cert_file to be set!");
         }
         if (!cfg->certfile ^ !cfg->keyfile) {
             PARSE_ERROR("need both cert_file and key_file for proper TLS operation!");
@@ -299,9 +285,6 @@ config_t *read_config(const char *file) {
 
         if (!cfg->verify_peer) {
             log_warning("insecure TLS operation used: verify_peer = false! Potential MITM vulnerability!");
-        }
-        if (cfg->port == 1883) {
-            log_warning("connecting to non-TLS port of MQTT while TLS settings were configured!");
         }
     }
 
@@ -333,7 +316,6 @@ void free_config(config_t *config) {
     free(config->password);
 
     free(config->cacertfile);
-    free(config->cacertpath);
     free(config->certfile);
     free(config->keyfile);
     free(config->tls_version);

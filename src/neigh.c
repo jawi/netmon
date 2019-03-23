@@ -10,7 +10,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #include <libmnl/libmnl.h>
 #include <linux/neighbour.h>
@@ -18,20 +17,17 @@
 #include <linux/rtnetlink.h>
 
 #include "addr_common.h"
-#include "event.h"
 #include "neigh.h"
-#include "mqtt.h"
 #include "mnl_extra.h"
 #include "logging.h"
 #include "util.h"
 
-typedef struct neighbour_info {
-    int index;
-    uint16_t state;
-    uint8_t ll_addr[MAC_LEN];
-    struct addr dst_addr;
-    struct neighbour_info *next;
-} neighbour_info_t;
+typedef struct neighbour_info neighbour_info_t;
+
+struct neighbour_info {
+    neigh_t neigh;
+    neighbour_info_t *next;
+};
 
 struct neigh_handle {
     neighbour_info_t *neighbours;
@@ -58,70 +54,56 @@ void destroy_neigh(neigh_handle_t *handle) {
     free(handle);
 }
 
-static char *format_state(const uint16_t state) {
-    switch (state) {
-    case NUD_INCOMPLETE:
-        return "incomplete";
-    case NUD_REACHABLE:
-        return "reachable";
-    case NUD_STALE:
-        return "stale";
-    case NUD_DELAY:
-        return "delayed";
-    case NUD_PROBE:
-        return "probing";
-    case NUD_FAILED:
-        return "failed";
-    default:
-        return "unknown";
-    }
+static neigh_t *copy_neigh(const neigh_t *src) {
+    neigh_t *result = malloc(sizeof(neigh_t));
+    memcpy(result->ll_addr, src->ll_addr, sizeof(src->ll_addr));
+    result->index = src->index;
+    result->dst_addr = src->dst_addr;
+    result->state = src->state;
+    return result;
 }
 
-static inline event_t *create_neigh_event(event_type_t event_type, neighbour_info_t *ptr) {
-    return create_event(event_type, "time=%lu,idx=%d,addr=%s,mac=%s,state=%s",
-                        time(NULL), ptr->index, ptr->dst_addr.addr, format_mac(ptr->ll_addr),
-                        format_state(ptr->state));
-}
-
-static event_t *add_neigh(neigh_handle_t *handle, int index, uint8_t family,
+static neigh_t *add_neigh(neigh_handle_t *handle, int32_t index, uint8_t family,
                           char dst_ip[INET6_ADDRSTRLEN], uint8_t ll_addr[MAC_LEN],
                           uint16_t state) {
     neighbour_info_t *ptr = NULL;
 
     // Look whether we already have it in our list...
     for (ptr = handle->neighbours; ptr; ptr = ptr->next) {
-        if (ptr->index != index) {
+        neigh_t ptr_neigh = ptr->neigh;
+        if (ptr_neigh.index != index) {
             continue;
         }
-        const struct addr dst_addr = ptr->dst_addr;
+
+        const addr_t dst_addr = ptr_neigh.dst_addr;
         if (dst_addr.family != family) {
             continue;
         }
         if (strncmp(dst_addr.addr, dst_ip, strlen(dst_addr.addr)) != 0) {
             continue;
         }
-        if (memcmp(ptr->ll_addr, ll_addr, MAC_LEN) != 0) {
+        if (memcmp(ptr->neigh.ll_addr, ll_addr, MAC_LEN) != 0) {
             continue;
         }
 
         // Found it...
-        uint16_t old_state = ptr->state;
-        ptr->state = state;
+        uint16_t old_state = ptr_neigh.state;
+        ptr_neigh.state = state;
 
         log_debug("updating existing neighbour (%s <=> %s), state = %d vs %d)",
                   dst_ip, format_mac(ll_addr), old_state, state);
 
-        return create_neigh_event(NEIGHBOUR_UPDATE, ptr);
+        return copy_neigh(&ptr->neigh);
     }
 
     assert(ptr == NULL);
 
     ptr = malloc(sizeof(neighbour_info_t));
-    ptr->index = index;
-    ptr->state = state;
-    ptr->dst_addr.family = family;
-    memcpy(ptr->dst_addr.addr, dst_ip, INET6_ADDRSTRLEN);
-    memcpy(ptr->ll_addr, ll_addr, MAC_LEN);
+    ptr->neigh.index = index;
+    ptr->neigh.state = state;
+    ptr->neigh.dst_addr.family = family;
+    memcpy(ptr->neigh.dst_addr.addr, dst_ip, INET6_ADDRSTRLEN);
+    memcpy(ptr->neigh.ll_addr, ll_addr, MAC_LEN);
     ptr->next = handle->neighbours;
 
     handle->neighbours = ptr;
@@ -129,19 +111,20 @@ static event_t *add_neigh(neigh_handle_t *handle, int index, uint8_t family,
     log_debug("added new neighbour (%s <=> %s), state = %d",
               dst_ip, format_mac(ll_addr), state);
 
-    return create_neigh_event(NEIGHBOUR_ADD, ptr);
+    return copy_neigh(&ptr->neigh);
 }
 
-static event_t *del_neigh(neigh_handle_t *handle, int index, uint8_t family,
+static neigh_t *del_neigh(neigh_handle_t *handle, int32_t index, uint8_t family,
                           char dst_ip[INET6_ADDRSTRLEN]) {
     neighbour_info_t *ptr = NULL, *prev = NULL;
 
     // Look whether we already have it in our list...
     for (ptr = handle->neighbours; ptr; prev = ptr, ptr = ptr->next) {
-        if (ptr->index != index) {
+        const neigh_t ptr_neigh = ptr->neigh;
+        if (ptr_neigh.index != index) {
             continue;
         }
-        const struct addr dst_addr = ptr->dst_addr;
+        const addr_t dst_addr = ptr->neigh.dst_addr;
         if (dst_addr.family != family) {
             continue;
         }
@@ -165,13 +148,13 @@ static event_t *del_neigh(neigh_handle_t *handle, int index, uint8_t family,
         handle->neighbours = ptr->next;
     }
 
-    log_debug("deleted neighbour (%s <=> %s)", dst_ip, format_mac(ptr->ll_addr));
+    log_debug("deleted neighbour (%s <=> %s)", dst_ip, format_mac(ptr->neigh.ll_addr));
 
-    event_t *event = create_neigh_event(NEIGHBOUR_DELETE, ptr);
+    neigh_t *result = copy_neigh(&ptr->neigh);
 
     free(ptr);
 
-    return event;
+    return result;
 }
 
 static int neigh_data_attr_cb(const struct nlattr *attr, void *data) {
@@ -192,7 +175,7 @@ static int neigh_data_attr_cb(const struct nlattr *attr, void *data) {
     return MNL_CB_OK;
 }
 
-event_t *update_neigh(neigh_handle_t *handle, const struct nlmsghdr *nlh, int *result) {
+neigh_t *update_neigh(neigh_handle_t *handle, const struct nlmsghdr *nlh, int *result) {
     struct ndmsg *ndm = mnl_nlmsg_get_payload(nlh);
 
     *result = MNL_CB_OK;
@@ -227,15 +210,15 @@ event_t *update_neigh(neigh_handle_t *handle, const struct nlmsghdr *nlh, int *r
     const uint16_t type = nlh->nlmsg_type;
     if (type == RTM_NEWNEIGH && tb[NDA_DST]) {
         if (ndm->ndm_state == NUD_FAILED) {
-            return del_neigh(handle, ndm->ndm_ifindex, ndm->ndm_family, dst_ip);
+            return del_neigh(handle, (int32_t) ndm->ndm_ifindex, ndm->ndm_family, dst_ip);
         } else if (tb[NDA_LLADDR]) {
-            return add_neigh(handle, ndm->ndm_ifindex, ndm->ndm_family, dst_ip, ll_addr, ndm->ndm_state);
+            return add_neigh(handle, (int32_t) ndm->ndm_ifindex, ndm->ndm_family, dst_ip, ll_addr, ndm->ndm_state);
         } else {
             log_debug("neigh_data_cb[type = %02x], dst_ip = %s, mac = %s, state = %02x\n",
                       nlh->nlmsg_type, dst_ip, format_mac(ll_addr), ndm->ndm_state);
         }
     } else if (type == RTM_DELNEIGH && tb[NDA_DST]) {
-        return del_neigh(handle, ndm->ndm_ifindex, ndm->ndm_family, dst_ip);
+        return del_neigh(handle, (int32_t) ndm->ndm_ifindex, ndm->ndm_family, dst_ip);
     } else {
         log_debug("neigh_data_cb[type = %02x], dst_ip = %s, mac = %s, state = %02x\n",
                   nlh->nlmsg_type, dst_ip, format_mac(ll_addr), ndm->ndm_state);

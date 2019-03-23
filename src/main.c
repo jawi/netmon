@@ -21,7 +21,7 @@
 
 #include "config.h"
 #include "logging.h"
-#include "mqtt.h"
+#include "nats.h"
 #include "netlink.h"
 #include "netmon.h"
 #include "util.h"
@@ -124,28 +124,28 @@ static void *event_producer_thread(void *arg) {
 }
 
 static void event_consumer_cleanup(void *arg) {
-    mqtt_handle_t *mqtt_handle = (mqtt_handle_t *)arg;
+    nats_handle_t *nats_handle = (nats_handle_t *)arg;
 
     log_debug("Terminating consumer thread...");
 
-    disconnect_mqtt(mqtt_handle);
-    destroy_mqtt(mqtt_handle);
+    disconnect_nats(nats_handle);
+    destroy_nats(nats_handle);
 }
 
 static void *event_consumer_thread(void *arg) {
     run_state_t *state = (run_state_t *) arg;
 
-    mqtt_handle_t *mqtt_handle = init_mqtt();
-    if (!mqtt_handle) {
-        log_warning("MQTT initialization failed!");
+    nats_handle_t *nats_handle = init_nats();
+    if (!nats_handle) {
+        log_warning("NATS initialization failed!");
         PTHREAD_TERMINATE();
     }
 
     // Make sure we clean up the mess we've made...
-    pthread_cleanup_push(event_consumer_cleanup, mqtt_handle);
+    pthread_cleanup_push(event_consumer_cleanup, nats_handle);
 
-    if (connect_mqtt(mqtt_handle, state->config)) {
-        log_error("Failed to connect to MQTT broker, giving up...");
+    if (connect_nats(nats_handle, state->config)) {
+        log_error("Failed to connect to NATS, giving up...");
         PTHREAD_TERMINATE();
     }
 
@@ -185,7 +185,7 @@ static void *event_consumer_thread(void *arg) {
         if (event) {
             // log_debug("consumer received an event: %s!", event->data);
 
-            publish_mqtt(mqtt_handle, event);
+            publish_nats(nats_handle, event);
 
             free_event(event);
         }
@@ -416,19 +416,14 @@ int main(int argc, char *argv[]) {
     if (!foreground) {
         log_debug("- daemon user/group: %d/%d", run_state.config->priv_user, run_state.config->priv_group);
     }
-    log_debug("- MQTT server: %s:%d", run_state.config->host, run_state.config->port);
+    log_debug("- NATS server: %s:%d", run_state.config->host, run_state.config->port);
     log_debug("  - client ID: %s", run_state.config->client_id);
-    log_debug("  - MQTT QoS: %d", run_state.config->qos);
-    log_debug("  - retain messages: %s", run_state.config->retain ? "yes" : "no");
     if (run_state.config->use_auth) {
         log_debug("  - using client credentials");
     }
     if (run_state.config->use_tls) {
         log_debug("- using TLS options:");
         log_debug("  - use TLS version: %s", run_state.config->tls_version);
-        if (run_state.config->cacertpath) {
-            log_debug("  - CA cert path: %s", run_state.config->cacertpath);
-        }
         if (run_state.config->cacertfile) {
             log_debug("  - CA cert file: %s", run_state.config->cacertfile);
         }
