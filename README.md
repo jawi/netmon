@@ -129,7 +129,6 @@ The fields in the JSON object have the following semantics:
 | src.mac   | the source MAC address                                                     |
 | src.vlan  | the source VLAN address (most probably also the VLAN of the neighbour)     |
 | src.ip    | the source IP address                                                      |
-|-----------|----------------------------------------------------------------------------|
 
 ## Development
 
