@@ -1,8 +1,7 @@
 # netmon
 
-netmon is a small utility that listens for changes in network addresses, links
-and neighbours using Netlink and dispatches events on MQTT for each of these 
-changes.
+netmon is a small utility that listens for changes in using Netlink and dispatches
+events on a MQTT topic for each of these changes.
 
 ## Usage
 
@@ -72,7 +71,7 @@ mqtt:
       ca_cert_path: /etc/ssl/certs
       # The CA certificate file, encoded in PEM format.
       # By default, no file is defined.
-      ca_cert_file: /etc/ssl/ca.pem
+      ca_cert_file: /etc/ssl/certs/ca.pem
       # The client certificate file, encoded in PEM format.
       # By default, no file is defined.
       cert_file: netmon.crt
@@ -90,10 +89,47 @@ mqtt:
       # What TLS ciphers should be used for the TLS connection.
       # Defaults to an empty string, denoting that the default ciphers
       # of the SSL library should be used.
-      ciphers: "!NULL"
+      ciphers: "TLSv1.2"
 
 ###EOF###
 ```
+
+## Output
+
+The event data is published on the MQTT topic `netmon.neigh` as a JSON object,
+for example:
+
+```json
+{
+   "last_seen": 1558955353,
+   "addr": "192.168.1.99",
+   "mac": "af:b8:62:f5:38:8c",
+   "src": {
+      "iface": "eth0",
+      "mac": "10:67:ec:22:af:4e",
+      "vlan": 2,
+      "ip": "192.168.1.1"
+   }
+}
+```
+
+**Note**: the actual output of the JSON object is compressed to a single line
+without newlines. The order of fields is not guaranteed to be the same across
+restarts of netmon.
+
+The fields in the JSON object have the following semantics:
+
+| Field     | Description                                                                |
+|-----------|----------------------------------------------------------------------------|
+| last_seen | the Unix epoch timestamp on which the neighbour was last seen by netmon    |
+| addr      | the IP address of the neighbour                                            |
+| mac       | the MAC address of the neighbour                                           |
+| src       | the information about the source interface on which the neighbour was seen |
+| src.iface | the source network interface                                               |
+| src.mac   | the source MAC address                                                     |
+| src.vlan  | the source VLAN address (most probably also the VLAN of the neighbour)     |
+| src.ip    | the source IP address                                                      |
+|-----------|----------------------------------------------------------------------------|
 
 ## Development
 
@@ -105,8 +141,8 @@ Netmon requires the following build dependencies:
 - libmosquitto (1.5.5 or later);
 - libyaml (0.2.1 or later).
 
-In addition, you need to compile it with a compiler that supports PTHREADS, 
-such as GCC or Clang.
+In addition, you a libc implementation that supports PTHREADS, such as glibc or
+musl.
 
 Since netlink functionality is used, netmon will only compile under Linux.
 

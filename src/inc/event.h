@@ -9,16 +9,10 @@
 
 #include <stddef.h>
 
+#include "addr_common.h"
+
 typedef enum event_type {
-    LINK_ADD,
-    LINK_UPDATE,
-    LINK_DELETE,
-    ADDRESS_ADD,
-    ADDRESS_UPDATE,
-    ADDRESS_DELETE,
-    NEIGHBOUR_ADD,
     NEIGHBOUR_UPDATE,
-    NEIGHBOUR_DELETE,
     event_type_count,
 } event_type_t;
 
@@ -29,7 +23,7 @@ typedef struct event {
 
 const char *event_topic_name(event_type_t event_type);
 
-event_t *create_event(event_type_t event_type, const char *fmt, ...);
+event_t *create_event(event_type_t event_type, const addr_t *src_addr, const link_t *src_link, const neigh_t *neigh);
 
 void free_event(event_t *event);
 
