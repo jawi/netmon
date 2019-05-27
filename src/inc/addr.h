@@ -8,7 +8,6 @@
 #define ADDR_H_
 
 #include "addr_common.h"
-#include "event.h"
 
 typedef struct addr_handle addr_handle_t;
 
@@ -16,6 +15,10 @@ addr_handle_t *init_addr(void);
 
 void destroy_addr(addr_handle_t *handle);
 
-event_t *update_addr(addr_handle_t *handle, const struct nlmsghdr *nlh, int *result);
+void update_addr(addr_handle_t *handle, const struct nlmsghdr *nlh, int *result);
+
+addr_t *get_addr(addr_handle_t *handle, int32_t index);
+
+void free_addr(addr_t *addr);
 
 #endif /* ADDR_H_ */

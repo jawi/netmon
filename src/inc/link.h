@@ -7,7 +7,7 @@
 #ifndef LINK_H_
 #define LINK_H_
 
-#include "event.h"
+#include "addr_common.h"
 
 typedef struct link_handle link_handle_t;
 
@@ -15,6 +15,10 @@ link_handle_t *init_link(void);
 
 void destroy_link(link_handle_t *handle);
 
-event_t *update_link(link_handle_t *handle, const struct nlmsghdr *nlh, int *result);
+void update_link(link_handle_t *handle, const struct nlmsghdr *nlh, int *result);
+
+link_t *get_link(link_handle_t *handle, int32_t index);
+
+void free_link(link_t *link);
 
 #endif /* LINK_H_ */
