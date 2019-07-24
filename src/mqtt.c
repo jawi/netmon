@@ -80,10 +80,6 @@ static int internal_connect_mqtt(mqtt_handle_t *handle) {
         return -1;
     }
 
-    // do not wait until our connect callback is called to set our state
-    // there: it will cause reconnection problems!
-    handle->conn_state = CONNECTED;
-
     return 0;
 }
 
@@ -116,8 +112,6 @@ static int internal_reconnect_mqtt(mqtt_handle_t *handle) {
         internal_connect_mqtt(handle);
     }
 
-    handle->conn_state = CONNECTED;
-
     return 0;
 }
 
@@ -144,6 +138,10 @@ static void my_disconnect_cb(struct mosquitto *mosq, void *user_data, int result
         handle->conn_state = NOT_CONNECTED;
         internal_reconnect_mqtt(handle);
     }
+}
+
+static void my_log_callback(struct mosquitto *mosq, void *user_data, int level, const char *msg) {
+    log_debug(msg);
 }
 
 int connect_mqtt(mqtt_handle_t *handle, const config_t *cfg) {
@@ -199,6 +197,7 @@ int connect_mqtt(mqtt_handle_t *handle, const config_t *cfg) {
 
     mosquitto_connect_callback_set(handle->mosq, my_connect_cb);
     mosquitto_disconnect_callback_set(handle->mosq, my_disconnect_cb);
+    mosquitto_log_callback_set(handle->mosq, my_log_callback);
 
     handle->host = cfg->host;
     handle->port = cfg->port;
