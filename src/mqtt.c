@@ -199,10 +199,19 @@ int connect_mqtt(mqtt_handle_t *handle, const config_t *cfg) {
     mosquitto_disconnect_callback_set(handle->mosq, my_disconnect_cb);
     mosquitto_log_callback_set(handle->mosq, my_log_callback);
 
+    mosquitto_reconnect_delay_set(handle->mosq, 2, 60, false);
+
     handle->host = cfg->host;
     handle->port = cfg->port;
     handle->qos = cfg->qos;
     handle->retain = cfg->retain;
+
+    status = internal_connect_mqtt(handle);
+    if (status != MOSQ_ERR_SUCCESS) {
+        log_error("failed to connect to mosquitto instance: %s", MOSQ_ERROR(status));
+        internal_destroy_mqtt(handle);
+        return -1;
+    }
 
     log_debug("starting MQTT message loop");
 
@@ -235,10 +244,6 @@ int disconnect_mqtt(mqtt_handle_t *handle) {
 }
 
 void publish_mqtt(mqtt_handle_t *handle, const event_t *event) {
-    if (internal_connect_mqtt(handle)) {
-        return;
-    }
-
     const char *topic = event_topic_name(event->event_type);
 
     log_debug("sending event on %s :: %s", topic, (char *)event->data);
