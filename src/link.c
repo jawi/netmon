@@ -54,12 +54,12 @@ void destroy_link(link_handle_t *handle) {
     free(handle);
 }
 
-static uint16_t *int16dup(uint16_t *src) {
+static uint16_t *int16dup(const uint16_t *src) {
     if (!src) {
         return NULL;
     }
     uint16_t *dst = malloc(sizeof(uint16_t));
-    *dst = *src;
+    memcpy(dst, src, sizeof(uint16_t));
     return dst;
 }
 
