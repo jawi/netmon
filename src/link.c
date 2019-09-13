@@ -59,12 +59,12 @@ static uint16_t *int16dup(const uint16_t *src) {
         return NULL;
     }
     uint16_t *dst = malloc(sizeof(uint16_t));
-    memcpy(dst, src, sizeof(uint16_t));
+    *dst = *src;
     return dst;
 }
 
 static void add_link(link_handle_t *handle, int index, const char *name,
-                     uint8_t ll_addr[MAC_LEN], uint16_t *vlan_id) {
+                     uint8_t ll_addr[MAC_LEN], const uint16_t *vlan_id) {
     link_info_t *ptr = NULL;
 
     // Look whether we already have it in our list...
@@ -254,7 +254,7 @@ void update_link(link_handle_t *handle, const struct nlmsghdr *nlh, int *result)
 
     const char *name = NULL;
     uint8_t ll_addr[MAC_LEN] = { 0 };
-    uint16_t *vlan_id = NULL;
+    const uint16_t *vlan_id = NULL;
 
     mnl_attr_parse(nlh, sizeof(*ifm), link_data_attr_cb, tb);
     if (tb[IFLA_IFNAME]) {
@@ -283,8 +283,7 @@ void update_link(link_handle_t *handle, const struct nlmsghdr *nlh, int *result)
             mnl_attr_parse_nested(li_tb[IFLA_INFO_DATA], vlan_data_attr_cb, vlan_tb);
 
             if (vlan_tb[IFLA_VLAN_ID]) {
-                uint16_t id = mnl_attr_get_u16(vlan_tb[IFLA_VLAN_ID]);
-                vlan_id = &id;
+                vlan_id = (uint16_t *)mnl_attr_get_payload(vlan_tb[IFLA_VLAN_ID]);
             }
         }
     }
