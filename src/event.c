@@ -47,19 +47,15 @@ event_t *create_event(event_type_t event_type, const addr_t *src_addr, const lin
     BUFFER_ADD("{\"last_seen\":%lu,\"addr\":\"%s\",\"mac\":\"%s\"",
                time(NULL), neigh->dst_addr.addr, format_mac(neigh->ll_addr));
 
-    if (src_addr || src_link) {
-        BUFFER_ADD(",\"src\":{");
-        if (src_link) {
-            BUFFER_ADD("\"iface\":\"%s\",\"mac\":\"%s\"",
-                       src_link->name, format_mac(src_link->ll_addr));
-            if (src_link->vlan_id) {
-                BUFFER_ADD(",\"vlan\":%d", *src_link->vlan_id);
-            }
+    if (src_link) {
+        BUFFER_ADD(",\"src_iface\":\"%s\",\"src_mac\":\"%s\"",
+                    src_link->name, format_mac(src_link->ll_addr));
+        if (src_link->vlan_id) {
+            BUFFER_ADD(",\"src_vlan\":%d", *src_link->vlan_id);
         }
-        if (src_addr) {
-            BUFFER_ADD(",\"ip\":\"%s\"", src_addr->addr);
-        }
-        BUFFER_ADD("}");
+    }
+    if (src_addr) {
+        BUFFER_ADD(",\"src_ip\":\"%s\"", src_addr->addr);
     }
 
     BUFFER_ADD("}");
