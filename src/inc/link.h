@@ -21,4 +21,6 @@ link_t *get_link(link_handle_t *handle, int32_t index);
 
 void free_link(link_t *link);
 
+void dump_link(link_handle_t *handle);
+
 #endif /* LINK_H_ */

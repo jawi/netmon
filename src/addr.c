@@ -176,8 +176,6 @@ void update_addr(addr_handle_t *handle, const struct nlmsghdr *nlh, int *result)
     struct nlattr *tb[IFA_MAX + 1] = { 0 };
     struct ifaddrmsg *ifa = mnl_nlmsg_get_payload(nlh);
 
-    *result = MNL_CB_OK;
-
     if (ifa->ifa_scope != 0) {
         // Only global scope addresses...
         return;
@@ -203,5 +201,15 @@ void update_addr(addr_handle_t *handle, const struct nlmsghdr *nlh, int *result)
         } else {
             log_warning("unsupported addr_type = %02d!", type);
         }
+    }
+}
+
+void dump_addr(addr_handle_t *handle) {
+    addr_info_t *ptr = NULL;
+	uint32_t idx = 0;
+
+    for (ptr = handle->addresses; ptr; ptr = ptr->next, idx++) {
+		log_info("[addr:%d] link_idx:%d, family:%d, addr:%s", idx,
+			ptr->addr.index, ptr->addr.family, ptr->addr.addr);
     }
 }

@@ -178,8 +178,6 @@ static int neigh_data_attr_cb(const struct nlattr *attr, void *data) {
 neigh_t *update_neigh(neigh_handle_t *handle, const struct nlmsghdr *nlh, int *result) {
     struct ndmsg *ndm = mnl_nlmsg_get_payload(nlh);
 
-    *result = MNL_CB_OK;
-
     if (ndm->ndm_state == NUD_NOARP || ndm->ndm_state == NUD_PERMANENT) {
         // Not interested...
         return NULL;
@@ -225,4 +223,14 @@ neigh_t *update_neigh(neigh_handle_t *handle, const struct nlmsghdr *nlh, int *r
     }
 
     return NULL;
+}
+
+void dump_neigh(neigh_handle_t *handle) {
+    neighbour_info_t *ptr = NULL;
+	uint32_t idx = 0;
+
+    for (ptr = handle->neighbours; ptr; ptr = ptr->next, idx++) {
+		log_info("[neigh:%d] link_idx:%d, state:%d, mac:%s, addr:%s", idx,
+			ptr->neigh.index, ptr->neigh.state, format_mac(ptr->neigh.ll_addr), ptr->neigh.dst_addr.addr);
+	}
 }

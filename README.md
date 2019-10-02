@@ -104,12 +104,10 @@ for example:
    "last_seen": 1558955353,
    "addr": "192.168.1.99",
    "mac": "af:b8:62:f5:38:8c",
-   "src": {
-      "iface": "eth0",
-      "mac": "10:67:ec:22:af:4e",
-      "vlan": 2,
-      "ip": "192.168.1.1"
-   }
+   "src_iface": "eth0",
+   "src_mac": "10:67:ec:22:af:4e",
+   "src_vlan": 2,
+   "src_ip": "192.168.1.1"
 }
 ```
 
@@ -125,10 +123,10 @@ The fields in the JSON object have the following semantics:
 | addr      | the IP address of the neighbour                                            |
 | mac       | the MAC address of the neighbour                                           |
 | src       | the information about the source interface on which the neighbour was seen |
-| src.iface | the source network interface                                               |
-| src.mac   | the source MAC address                                                     |
-| src.vlan  | the source VLAN address (most probably also the VLAN of the neighbour)     |
-| src.ip    | the source IP address                                                      |
+| src_iface | the source network interface                                               |
+| src_mac   | the source MAC address                                                     |
+| src_vlan  | the source VLAN address (most probably also the VLAN of the neighbour)     |
+| src_ip    | the source IP address                                                      |
 
 ## Development
 

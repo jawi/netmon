@@ -46,6 +46,7 @@ netlink_handle_t *init_netlink(netlink_event_callback_t callback) {
     handle->addr = init_addr();
     handle->link = init_link();
     handle->neigh = init_neigh();
+    handle->sock = NULL;
 
     return handle;
 }
@@ -92,7 +93,7 @@ static int netlink_data_cb(const struct nlmsghdr *nlh, void *data) {
     return ret;
 }
 
-static int netlink_recv_data(netlink_handle_t *handle, uint32_t expectedSeqNo) {
+static int netlink_recv_data(const netlink_handle_t *handle, const uint32_t expectedSeqNo) {
     char buf[MNL_SOCKET_BUFFER_SIZE];
     int ret = 0;
 
@@ -102,8 +103,8 @@ static int netlink_recv_data(netlink_handle_t *handle, uint32_t expectedSeqNo) {
             return -1;
         }
 
-        ret = mnl_cb_run(buf, (size_t) rec, expectedSeqNo, 0, netlink_data_cb, handle);
-    } while (ret > 0);
+        ret = mnl_cb_run(buf, (size_t) rec, expectedSeqNo, 0, netlink_data_cb, (void *)handle);
+    } while (expectedSeqNo != 0 && ret > 0);
 
     return 0;
 }
@@ -155,6 +156,11 @@ int connect_netlink(netlink_handle_t *handle) {
 }
 
 int disconnect_netlink(netlink_handle_t *handle) {
+    if (handle == NULL || handle->sock == NULL) {
+        // Nothing to do...
+        return 0;
+    }
+
     int status = mnl_socket_close(handle->sock);
     if (status) {
         log_warning("failed to disconnect from netlink socket!");
@@ -168,12 +174,23 @@ int disconnect_netlink(netlink_handle_t *handle) {
     return 0;
 }
 
-int netlink_loop(netlink_handle_t *handle) {
-    int status = netlink_recv_data(handle, 0);
-    if (status) {
-        log_warning("failed to receive data!");
+int netlink_fd(const netlink_handle_t *handle) {
+    if (handle->sock == NULL) {
         return -1;
     }
+    return mnl_socket_get_fd(handle->sock);
+}
 
-    return 0;
+int netlink_read_data(const netlink_handle_t *handle) {
+    return netlink_recv_data(handle, 0);
+}
+
+void netlink_dump_data(const netlink_handle_t *handle) {
+    log_debug("Dump of internal data started.");
+
+    dump_addr(handle->addr);
+    dump_link(handle->link);
+    dump_neigh(handle->neigh);
+
+    log_debug("Dump of internal data ended.");
 }
