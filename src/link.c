@@ -245,8 +245,6 @@ void update_link(link_handle_t *handle, const struct nlmsghdr *nlh, int *result)
     struct nlattr *tb[IFLA_MAX + 1] = { 0 };
     struct ifinfomsg *ifm = mnl_nlmsg_get_payload(nlh);
 
-    *result = MNL_CB_OK;
-
     if (ifm->ifi_flags & IFF_LOOPBACK) {
         // Skip loopback interfaces...
         return;
@@ -296,4 +294,19 @@ void update_link(link_handle_t *handle, const struct nlmsghdr *nlh, int *result)
     } else {
         log_warning("unsupported link_type = %02d!\n", type);
     }
+}
+
+void dump_link(link_handle_t *handle) {
+    link_info_t *ptr = NULL;
+	uint32_t idx = 0;
+
+    for (ptr = handle->links; ptr; ptr = ptr->next, idx++) {
+		if (ptr->link.vlan_id) {
+			log_info("[link:%d] link_idx:%d, name:%s, mac:%s, vlan:%d", idx,
+				ptr->link.index, ptr->link.name, format_mac(ptr->link.ll_addr), *(ptr->link.vlan_id));
+		} else {
+			log_info("[link:%d] link_idx:%d, name:%s, mac:%s", idx,
+				ptr->link.index, ptr->link.name, format_mac(ptr->link.ll_addr));
+		}
+	}
 }

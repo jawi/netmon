@@ -17,6 +17,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
+#include <poll.h>
 #include <pthread.h>
 
 #include "config.h"
@@ -43,21 +44,67 @@ typedef struct event_queue_item {
     event_t *event;
 } event_queue_item_t;
 
+enum events {
+    EVENT_TERM = 1,
+    EVENT_DUMP = 2,
+    EVENT_RELOAD = 3,
+};
+
+enum fds {
+    FD_EVENTS = 0,
+    FD_NETLINK = 1,
+    FD_MQTT = 2,
+    _FD_MAX,
+};
+
 typedef struct state {
     bool loop;
     config_t *config;
 
-    pthread_t tid[2];
+    int event_write_fd;
+
     event_queue_item_t *event_queue;
-    pthread_mutex_t mutex;
-    pthread_cond_t events_present;
+
+    struct pollfd fds[_FD_MAX];
 } run_state_t;
 
-static run_state_t run_state;
+static run_state_t run_state = { 0 };
 
-#define PTHREAD_TERMINATE() \
-	pthread_exit(0); \
-	return NULL
+/**
+ * Netlink callback called for every Netlink event.
+ */
+static void netlink_event_callback(event_t *event) {
+    event_queue_item_t *item = malloc(sizeof(event_queue_item_t));
+    item->next = run_state.event_queue;
+    item->event = event;
+    run_state.event_queue = item;
+}
+
+static event_t *pop_event_queue(void) {
+    event_queue_item_t *ptr = run_state.event_queue;
+    event_t *event = NULL;
+
+    if (ptr) {
+        event_queue_item_t *prev = NULL;
+        while (ptr->next) {
+            prev = ptr;
+            ptr = ptr->next;
+        }
+
+        if (ptr) {
+            event = ptr->event;
+            // consume event_queue_item item...
+            if (prev) {
+                prev->next = NULL;
+            } else {
+                run_state.event_queue = NULL;
+            }
+            free(ptr);
+        }
+    }
+
+    return event;
+}
 
 static void flush_event_queue(void) {
     event_queue_item_t *ptr = run_state.event_queue;
@@ -69,173 +116,6 @@ static void flush_event_queue(void) {
         free_event(item->event);
         free(item);
     }
-}
-
-static void event_producer_callback(event_t *event) {
-    pthread_mutex_lock(&(run_state.mutex));
-
-    event_queue_item_t *item = malloc(sizeof(event_queue_item_t));
-    item->next = run_state.event_queue;
-    item->event = event;
-    run_state.event_queue = item;
-
-    pthread_cond_signal(&(run_state.events_present));
-
-    pthread_mutex_unlock(&(run_state.mutex));
-
-    // log_debug("publishing event = %s", event[0]->data);
-}
-
-static void event_producer_cleanup(void *arg) {
-    netlink_handle_t *netlink_handle = (netlink_handle_t *)arg;
-
-    log_debug("terminating producer thread...");
-
-    disconnect_netlink(netlink_handle);
-    destroy_netlink(netlink_handle);
-}
-
-static void *event_producer_thread(void *arg) {
-    run_state_t *state = (run_state_t *) arg;
-
-    netlink_handle_t *handle = init_netlink(event_producer_callback);
-    if (!handle) {
-        log_warning("netlink initialization failed!");
-        PTHREAD_TERMINATE();
-    }
-
-    // Make sure we clean up the mess we've made...
-    pthread_cleanup_push(event_producer_cleanup, handle);
-
-    if (connect_netlink(handle)) {
-        log_warning("netlink connection failed!");
-        PTHREAD_TERMINATE();
-    }
-
-    log_debug("starting producer thread main loop...");
-
-    while (state->loop) {
-        netlink_loop(handle);
-    }
-
-    pthread_cleanup_pop(1 /* execute */);
-
-    PTHREAD_TERMINATE();
-}
-
-static void event_consumer_cleanup(void *arg) {
-    mqtt_handle_t *mqtt_handle = (mqtt_handle_t *)arg;
-
-    log_debug("Terminating consumer thread...");
-
-    disconnect_mqtt(mqtt_handle);
-    destroy_mqtt(mqtt_handle);
-}
-
-static void *event_consumer_thread(void *arg) {
-    run_state_t *state = (run_state_t *) arg;
-
-    mqtt_handle_t *mqtt_handle = init_mqtt();
-    if (!mqtt_handle) {
-        log_warning("MQTT initialization failed!");
-        PTHREAD_TERMINATE();
-    }
-
-    // Make sure we clean up the mess we've made...
-    pthread_cleanup_push(event_consumer_cleanup, mqtt_handle);
-
-    if (connect_mqtt(mqtt_handle, state->config)) {
-        log_error("Failed to connect to MQTT broker, giving up...");
-        PTHREAD_TERMINATE();
-    }
-
-    log_debug("Starting consumer thread main loop...");
-
-    while (state->loop) {
-        pthread_mutex_lock(&(state->mutex));
-
-        while (!state->event_queue) {
-            pthread_cond_wait(&(state->events_present), &(state->mutex));
-        }
-
-        event_queue_item_t *ptr = state->event_queue;
-        event_t *event = NULL;
-
-        if (ptr) {
-            event_queue_item_t *prev = NULL;
-            while (ptr->next) {
-                prev = ptr;
-                ptr = ptr->next;
-            }
-
-            if (ptr) {
-                event = ptr->event;
-                // consume event_queue_item item...
-                if (prev) {
-                    prev->next = NULL;
-                } else {
-                    state->event_queue = NULL;
-                }
-                free(ptr);
-            }
-        }
-
-        pthread_mutex_unlock(&(state->mutex));
-
-        if (event) {
-            // log_debug("consumer received an event: %s!", event->data);
-
-            publish_mqtt(mqtt_handle, event);
-
-            free_event(event);
-        }
-    }
-
-    pthread_cleanup_pop(1 /* execute */);
-
-    PTHREAD_TERMINATE();
-}
-
-static int daemon_start(run_state_t *state) {
-    state->loop = true;
-
-    pthread_mutex_init(&(state->mutex), NULL);
-    pthread_cond_init(&(state->events_present), NULL);
-
-    int ret;
-
-    ret = pthread_create(&(state->tid[0]), NULL, event_producer_thread, state);
-    if (ret) {
-        log_error("failed to create thread: %m");
-        return -1;
-    }
-
-    ret = pthread_setname_np(state->tid[0], "mnl handler");
-    if (ret) {
-        // non-fatal
-        log_warning("failed to set name for producer thread: %m");
-    }
-
-    ret = pthread_create(&(state->tid[1]), NULL, event_consumer_thread, state);
-    if (ret) {
-        log_error("failed to create thread: %m");
-        return -1;
-    }
-
-    ret = pthread_setname_np(state->tid[1], "mqtt handler");
-    if (ret) {
-        // non-fatal
-        log_warning("failed to set name for consumer thread: %m");
-    }
-
-    log_info(PNAME " v" VERSION " started.");
-
-    pthread_join(state->tid[0], NULL);
-    pthread_join(state->tid[1], NULL);
-
-    flush_event_queue();
-
-    return 0;
 }
 
 #define SAFE_SIGNAL(rc) \
@@ -336,16 +216,82 @@ static int daemonize(const char *pid_file, uid_t uid, gid_t gid) {
     return 0;
 }
 
+static void write_event(int fd, uint8_t event_type) {
+    uint8_t buf[1] = { event_type };
+    if (write(fd, buf, sizeof(buf)) != sizeof(buf)) {
+        log_warning("Did not write all event data?!");
+    }
+}
+
 static void signal_handler(int signo) {
     if (signo == SIGTERM || signo == SIGINT) {
-        run_state.loop = false;
+        write_event(run_state.event_write_fd, EVENT_TERM);
+    } else if (signo == SIGHUP) {
+        write_event(run_state.event_write_fd, EVENT_RELOAD);
+    } else if (signo == SIGUSR1) {
+        write_event(run_state.event_write_fd, EVENT_DUMP);
+    } else {
+        log_debug("Unknown/unhandled signal: %d", signo);
+    }
+}
 
-        pthread_cancel(run_state.tid[0]);
-        pthread_cancel(run_state.tid[1]);
+static void install_signal_handlers(void) {
+    struct sigaction sigact;
+
+    sigact.sa_handler = signal_handler;
+    sigact.sa_flags = 0;
+
+    sigemptyset(&sigact.sa_mask);
+
+    sigaction(SIGUSR1, &sigact, NULL);
+    sigaction(SIGUSR2, &sigact, NULL);
+    sigaction(SIGHUP, &sigact, NULL);
+    sigaction(SIGTERM, &sigact, NULL);
+    sigaction(SIGALRM, &sigact, NULL);
+    sigaction(SIGCHLD, &sigact, NULL);
+    sigaction(SIGINT, &sigact, NULL);
+
+    // Ignore SIGPIPE
+    sigact.sa_handler = SIG_IGN;
+    sigaction(SIGPIPE, &sigact, NULL);
+}
+
+static void dump_config(config_t *config) {
+    log_debug("Using configuration:");
+    log_debug("- daemon user/group: %d/%d", config->priv_user, config->priv_group);
+    log_debug("- MQTT server: %s:%d", config->host, config->port);
+    log_debug("  - client ID: %s", config->client_id);
+    log_debug("  - MQTT QoS: %d", config->qos);
+    log_debug("  - retain messages: %s", config->retain ? "yes" : "no");
+    if (config->use_auth) {
+        log_debug("  - using client credentials");
+    }
+    if (config->use_tls) {
+        log_debug("- using TLS options:");
+        log_debug("  - use TLS version: %s", config->tls_version);
+        if (config->cacertpath) {
+            log_debug("  - CA cert path: %s", config->cacertpath);
+        }
+        if (config->cacertfile) {
+            log_debug("  - CA cert file: %s", config->cacertfile);
+        }
+        if (config->certfile) {
+            log_debug("  - using client certificate: %s", config->certfile);
+        }
+        log_debug("  - verify peer: %s", config->verify_peer ? "yes" : "no");
+        if (config->ciphers) {
+            log_debug("  - cipher suite: %s", config->ciphers);
+        }
     }
 }
 
 int main(int argc, char *argv[]) {
+    const nfds_t nfds = _FD_MAX;
+
+    int event_pipe[2] = { 0, 0 };
+    netlink_handle_t *nl_handle = { 0 };
+    mqtt_handle_t *mqtt_handle = { 0 };
+
     // parse arguments...
     char *conf_file = NULL;
     char *pid_file = NULL;
@@ -395,51 +341,17 @@ int main(int argc, char *argv[]) {
     // do this *after* we've closed the file descriptors!
     init_logging(debug, foreground);
 
-    struct sigaction sigact;
-
     // install the signal handling routine
-    sigact.sa_handler = signal_handler;
-    sigact.sa_flags = 0;
-    sigemptyset(&sigact.sa_mask);
-
-    sigaction(SIGHUP, &sigact, NULL);
-    sigaction(SIGTERM, &sigact, NULL);
-    sigaction(SIGINT, &sigact, NULL);
+    install_signal_handlers();
 
     run_state.config = read_config(conf_file);
 
+    // Sanity check; make sure we've got a valid configuration at hand...
     if (run_state.config == NULL) {
-        exit(EXIT_FAILURE);
+        goto cleanup;
     }
 
-    log_debug("Using configuration:");
-    if (!foreground) {
-        log_debug("- daemon user/group: %d/%d", run_state.config->priv_user, run_state.config->priv_group);
-    }
-    log_debug("- MQTT server: %s:%d", run_state.config->host, run_state.config->port);
-    log_debug("  - client ID: %s", run_state.config->client_id);
-    log_debug("  - MQTT QoS: %d", run_state.config->qos);
-    log_debug("  - retain messages: %s", run_state.config->retain ? "yes" : "no");
-    if (run_state.config->use_auth) {
-        log_debug("  - using client credentials");
-    }
-    if (run_state.config->use_tls) {
-        log_debug("- using TLS options:");
-        log_debug("  - use TLS version: %s", run_state.config->tls_version);
-        if (run_state.config->cacertpath) {
-            log_debug("  - CA cert path: %s", run_state.config->cacertpath);
-        }
-        if (run_state.config->cacertfile) {
-            log_debug("  - CA cert file: %s", run_state.config->cacertfile);
-        }
-        if (run_state.config->certfile) {
-            log_debug("  - using client certificate: %s", run_state.config->certfile);
-        }
-        log_debug("  - verify peer: %s", run_state.config->verify_peer ? "yes" : "no");
-        if (run_state.config->ciphers) {
-            log_debug("  - cipher suite: %s", run_state.config->ciphers);
-        }
-    }
+    dump_config(run_state.config);
 
     if (!foreground) {
         int retval = daemonize(pid_file, run_state.config->priv_user, run_state.config->priv_group);
@@ -448,12 +360,175 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    daemon_start(&run_state);
+    // Netlink initialization...
+    nl_handle = init_netlink(netlink_event_callback);
+    if (!nl_handle) {
+        log_warning("Netlink initialization failed!");
+        return -1;
+    }
+
+    // MQTT initialization...
+    mqtt_handle = init_mqtt();
+    if (!mqtt_handle) {
+        log_warning("MQTT initialization failed!");
+        return -1;
+    }
+
+    // allow events to be sent through a pipe...
+    if (pipe(event_pipe) < 0) {
+        perror("pipe");
+        return ERR_PIPE;
+    }
+
+    // Keep track of the writing side...
+    run_state.event_write_fd = event_pipe[1];
+
+    // Prepare the netlink connection...
+    if (connect_netlink(nl_handle)) {
+        log_warning("netlink connection failed!");
+        return -1;
+    }
+
+    // Prepare the MQTT connection...
+    if (connect_mqtt(mqtt_handle, run_state.config)) {
+        log_warning("MQTT connection failed!");
+        return -1;
+    }
+
+    run_state.loop = true;
+
+    while (run_state.loop) {
+        // Re-initialize the events we're interested in...
+        run_state.fds[FD_EVENTS].fd = event_pipe[0];
+        run_state.fds[FD_EVENTS].events = POLLIN;
+
+        run_state.fds[FD_NETLINK].fd = netlink_fd(nl_handle);
+        run_state.fds[FD_NETLINK].events = POLLIN;
+
+        run_state.fds[FD_MQTT].fd = mqtt_fd(mqtt_handle);
+        run_state.fds[FD_MQTT].events = POLLIN;
+        if (mqtt_wants_to_write(mqtt_handle)) {
+            run_state.fds[FD_MQTT].events |= POLLOUT;
+        }
+
+        int count = poll(run_state.fds, nfds, 100);
+        if (count < 0) {
+            if (errno == EINTR) {
+                log_debug("poll was interrupted by system signal; ignoring...");
+            } else {
+                log_warning("failed to poll: %m");
+                break;
+            }
+        } else if (count > 0) {
+            // There was something of interest; let's look a little closer...
+            if (run_state.fds[FD_NETLINK].revents) {
+                int16_t revents = run_state.fds[FD_NETLINK].revents;
+                if (revents & POLLIN) {
+                    log_debug("got netlink data to read...");
+
+                    if (netlink_read_data(nl_handle)) {
+                        log_warning("failed to read netlink data!");
+                    }
+                } else if (revents & (POLLHUP | POLLERR)) {
+                    log_warning("netlink connection dropped!");
+                }
+            } else if (run_state.fds[FD_EVENTS].revents) {
+                int16_t revents = run_state.fds[FD_EVENTS].revents;
+                if (revents & POLLIN) {
+                    log_debug("got event data to read...");
+
+                    uint8_t buf[1] = { 0 };
+                    if (read(event_pipe[FD_EVENTS], &buf, sizeof(buf)) != sizeof(buf)) {
+                        log_warning("Did not read all event data?!");
+                        continue;
+                    }
+
+                    switch (buf[0]) {
+                    case EVENT_TERM:
+                        run_state.loop = false;
+                        break;
+
+                    case EVENT_RELOAD:
+                        log_debug("Reloading...");
+                        config_t *new_config = read_config(conf_file);
+
+                        // Sanity check; make sure we've got a valid configuration at hand...
+                        if (new_config == NULL) {
+                            run_state.loop = false;
+                        } else {
+                            // reconnect using the new configuration...
+                            disconnect_mqtt(mqtt_handle);
+
+                            dump_config(new_config);
+
+                            free_config(run_state.config);
+                            run_state.config = new_config;
+
+                            connect_mqtt(mqtt_handle, run_state.config);
+                        }
+                        break;
+
+                    case EVENT_DUMP:
+                        netlink_dump_data(nl_handle);
+                        break;
+
+                    default:
+                        log_debug("Unknown event received: %d", buf[0]);
+                        break;
+                    }
+                } else if (revents & (POLLHUP | POLLERR)) {
+                    log_warning("Event connection dropped! Terminating...");
+                    run_state.loop = false;
+                }
+            } else if (run_state.fds[FD_MQTT].revents) {
+                int16_t revents = run_state.fds[FD_MQTT].revents;
+                if (revents & POLLIN) {
+                    log_debug("got MQTT data to read...");
+
+                    if (mqtt_read_data(mqtt_handle)) {
+                        log_warning("unable to read MQTT data!");
+                    }
+                } else if (revents & POLLOUT) {
+                    log_debug("got MQTT data to write...");
+
+                    if (mqtt_write_data(mqtt_handle)) {
+                        log_warning("unable to write MQTT data!");
+                    }
+                } else if (revents & (POLLHUP | POLLERR)) {
+                    log_warning("MQTT connection dropped!");
+                }
+            }
+        }
+
+        // Update MQTTs internal administration...
+        mqtt_update_administration(mqtt_handle);
+
+        event_t *event = pop_event_queue();
+        if (event != NULL) {
+            if (publish_mqtt(mqtt_handle, event) == 0) {
+                // Clean up the resources...
+                free_event(event);
+            }
+        }
+    }
 
     log_info(PNAME " terminating.");
 
-    free_config(run_state.config);
+cleanup:
+    disconnect_netlink(nl_handle);
+    disconnect_mqtt(mqtt_handle);
+
+    flush_event_queue();
+
+    // Close our local resources...
+    close(event_pipe[0]);
+    close(event_pipe[1]);
+
+    destroy_netlink(nl_handle);
+    destroy_mqtt(mqtt_handle);
     destroy_logging();
+
+    free_config(run_state.config);
 
     // best effort; will only succeed if the permissions are set correctly...
     unlink(pid_file);

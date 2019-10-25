@@ -16,6 +16,8 @@
 #include "mqtt.h"
 #include "logging.h"
 
+#define MAX_RECONNECT_DELAY_VALUE 32
+
 #define MOSQ_ERROR(s) \
 	((s) == MOSQ_ERR_ERRNO) ? strerror(errno) : mosquitto_strerror((s))
 
@@ -23,6 +25,7 @@ typedef enum conn_state {
     INITIALIZED,
     NOT_CONNECTED,
     CONNECTED,
+    RECONNECTING,
     DISCONNECTED,
 } conn_state_t;
 
@@ -33,6 +36,9 @@ struct mqtt_handle {
     int port;
     bool retain;
     int qos;
+
+    time_t next_reconnect_attempt;
+    int next_delay_value;
 };
 
 mqtt_handle_t *init_mqtt(void) {
@@ -48,6 +54,8 @@ mqtt_handle_t *init_mqtt(void) {
     handle->conn_state = INITIALIZED;
     handle->retain = true;
     handle->qos = 0;
+    handle->next_reconnect_attempt = -1L;
+    handle->next_delay_value = 1;
 
     return handle;
 }
@@ -69,11 +77,7 @@ void destroy_mqtt(mqtt_handle_t *handle) {
     mosquitto_lib_cleanup();
 }
 
-static int internal_connect_mqtt(mqtt_handle_t *handle) {
-    if (handle->conn_state == CONNECTED || handle->conn_state == DISCONNECTED) {
-        return 0;
-    }
-
+static int internal_connect_mqtt(const mqtt_handle_t *handle) {
     int status = mosquitto_connect(handle->mosq, handle->host, handle->port, 60 /* keepalive */);
     if (status != MOSQ_ERR_SUCCESS) {
         log_warning("failed to connect to MQTT broker: %s", MOSQ_ERROR(status));
@@ -83,15 +87,11 @@ static int internal_connect_mqtt(mqtt_handle_t *handle) {
     return 0;
 }
 
-static int internal_disconnect_mqtt(mqtt_handle_t *handle) {
+static int internal_disconnect_mqtt(const mqtt_handle_t *handle) {
     int status = mosquitto_disconnect(handle->mosq);
     if (status != MOSQ_ERR_SUCCESS && status != MOSQ_ERR_NO_CONN) {
         log_warning("failed to disconnect from MQTT broker: %s", MOSQ_ERROR(status));
         return -1;
-    }
-
-    if (handle->conn_state != DISCONNECTED) {
-        handle->conn_state = NOT_CONNECTED;
     }
 
     return 0;
@@ -102,15 +102,29 @@ static int internal_reconnect_mqtt(mqtt_handle_t *handle) {
         return 0;
     }
 
-    log_debug("reconnecting to MQTT broker");
+    time_t now = time(NULL);
+    if (handle->conn_state == RECONNECTING && handle->next_reconnect_attempt >= now) {
+        return 1;
+    }
+
+    handle->conn_state = RECONNECTING;
 
     int status = mosquitto_reconnect(handle->mosq);
     if (status != MOSQ_ERR_SUCCESS) {
-        log_warning("failed to reconnect to MQTT broker: %s", MOSQ_ERROR(status));
+        log_debug("failed to reconnect to MQTT broker: %s", MOSQ_ERROR(status));
 
-        internal_disconnect_mqtt(handle);
-        internal_connect_mqtt(handle);
+        handle->next_reconnect_attempt = now + handle->next_delay_value;
+
+        if (handle->next_delay_value < MAX_RECONNECT_DELAY_VALUE) {
+            handle->next_delay_value <<= 1;
+        }
+
+        return -1;
     }
+
+    handle->conn_state = CONNECTED;
+    handle->next_reconnect_attempt = -1L;
+    handle->next_delay_value = 1;
 
     return 0;
 }
@@ -122,10 +136,8 @@ static void my_connect_cb(struct mosquitto *mosq, void *user_data, int result) {
         log_info("successfully connected to MQTT broker");
         handle->conn_state = CONNECTED;
     } else if (handle->conn_state != DISCONNECTED) {
-        log_warning("unable to connect to MQTT broker");
-
+        log_warning("unable to connect to MQTT broker. Reason: %s", MOSQ_ERROR(result));
         handle->conn_state = NOT_CONNECTED;
-        internal_reconnect_mqtt(handle);
     }
 }
 
@@ -133,10 +145,8 @@ static void my_disconnect_cb(struct mosquitto *mosq, void *user_data, int result
     mqtt_handle_t *handle = (mqtt_handle_t *)user_data;
 
     if (handle->conn_state != DISCONNECTED) {
-        log_info("disconnected from MQTT broker");
-
+        log_info("disconnected from MQTT broker. Reason: %s", MOSQ_ERROR(result));
         handle->conn_state = NOT_CONNECTED;
-        internal_reconnect_mqtt(handle);
     }
 }
 
@@ -147,9 +157,11 @@ static void my_log_callback(struct mosquitto *mosq, void *user_data, int level, 
 int connect_mqtt(mqtt_handle_t *handle, const config_t *cfg) {
     int status;
 
-    log_debug("creating new mosquitto instance");
+    if (!handle->mosq) {
+        log_debug("creating new mosquitto instance");
 
-    handle->mosq = mosquitto_new(cfg->client_id, true /* clean session */, handle);
+        handle->mosq = mosquitto_new(cfg->client_id, true /* clean session */, handle);
+    }
     if (!handle->mosq) {
         log_error("failed to create new mosquitto instance");
         return -1;
@@ -199,54 +211,100 @@ int connect_mqtt(mqtt_handle_t *handle, const config_t *cfg) {
     mosquitto_disconnect_callback_set(handle->mosq, my_disconnect_cb);
     mosquitto_log_callback_set(handle->mosq, my_log_callback);
 
-    mosquitto_reconnect_delay_set(handle->mosq, 2, 60, false);
-
     handle->host = cfg->host;
     handle->port = cfg->port;
     handle->qos = cfg->qos;
     handle->retain = cfg->retain;
 
     status = internal_connect_mqtt(handle);
-    if (status != MOSQ_ERR_SUCCESS) {
-        log_error("failed to connect to mosquitto instance: %s", MOSQ_ERROR(status));
-        internal_destroy_mqtt(handle);
-        return -1;
+    if (status == MOSQ_ERR_SUCCESS) {
+        log_debug("connection setup to MQTT broker complete");
+    } else {
+        log_error("connection to MQTT broker pending. Reason: %s", MOSQ_ERROR(status));
     }
-
-    log_debug("starting MQTT message loop");
-
-    status = mosquitto_loop_start(handle->mosq);
-    if (status != MOSQ_ERR_SUCCESS) {
-        log_error("failed to start MQTT message loop: %s", MOSQ_ERROR(status));
-        internal_destroy_mqtt(handle);
-        return -1;
-    }
-
-    log_debug("connection setup to MQTT broker complete");
 
     return 0;
 }
 
 int disconnect_mqtt(mqtt_handle_t *handle) {
-    handle->conn_state = DISCONNECTED;
-
-    int status = mosquitto_loop_stop(handle->mosq, true /* force */);
-    if (status != MOSQ_ERR_SUCCESS) {
-        log_warning("failed to stop MQTT message loop: %s", MOSQ_ERROR(status));
-        return -1;
+    if (handle == NULL || handle->mosq == NULL) {
+        // Nothing to do...
+        return 0;
     }
 
-    status = internal_disconnect_mqtt(handle);
+    handle->conn_state = DISCONNECTED;
+
+    int status = internal_disconnect_mqtt(handle);
 
     log_debug("MQTT broker connection teardown complete");
 
     return status;
 }
 
-void publish_mqtt(mqtt_handle_t *handle, const event_t *event) {
-    const char *topic = event_topic_name(event->event_type);
+static bool mqtt_needs_to_reconnect(int status) {
+    return status == MOSQ_ERR_NO_CONN ||
+           status == MOSQ_ERR_CONN_REFUSED ||
+           status == MOSQ_ERR_CONN_LOST ||
+           status == MOSQ_ERR_TLS ||
+           status == MOSQ_ERR_AUTH ||
+           status == MOSQ_ERR_UNKNOWN;
+}
 
-    log_debug("sending event on %s :: %s", topic, (char *)event->data);
+int mqtt_fd(const mqtt_handle_t *handle) {
+    if (handle->mosq == NULL) {
+        return -1;
+    }
+    return mosquitto_socket(handle->mosq);
+}
+
+int mqtt_read_data(mqtt_handle_t *handle) {
+    int status = mosquitto_loop_read(handle->mosq, 1 /* max_packets */);
+    if (status != MOSQ_ERR_SUCCESS) {
+        if (mqtt_needs_to_reconnect(status)) {
+            return internal_reconnect_mqtt(handle);
+        }
+
+        log_warning("Failed to read MQTT messages. Reason: %s", MOSQ_ERROR(status));
+        return -1;
+    }
+
+    return 0;
+}
+
+int mqtt_update_administration(mqtt_handle_t *handle) {
+    int status = mosquitto_loop_misc(handle->mosq);
+    if (status != MOSQ_ERR_SUCCESS) {
+        if (mqtt_needs_to_reconnect(status)) {
+            return internal_reconnect_mqtt(handle);
+        }
+
+        log_warning("Failed to do misc MQTT administration. Reason: %s", MOSQ_ERROR(status));
+        return -1;
+    }
+
+    return 0;
+}
+
+int mqtt_write_data(mqtt_handle_t *handle) {
+    int status = mosquitto_loop_write(handle->mosq, 1 /* max_packets */);
+    if (status != MOSQ_ERR_SUCCESS) {
+        if (mqtt_needs_to_reconnect(status)) {
+            return internal_reconnect_mqtt(handle);
+        }
+
+        log_warning("Failed to write MQTT messages. Reason: %s", MOSQ_ERROR(status));
+        return -1;
+    }
+
+    return 0;
+}
+
+bool mqtt_wants_to_write(const mqtt_handle_t *handle) {
+    return mosquitto_want_write(handle->mosq);
+}
+
+int publish_mqtt(mqtt_handle_t *handle, const event_t *event) {
+    const char *topic = event_topic_name(event->event_type);
 
     int status = mosquitto_publish(handle->mosq, NULL /* message id */,
                                    topic,
@@ -254,8 +312,15 @@ void publish_mqtt(mqtt_handle_t *handle, const event_t *event) {
                                    handle->qos, handle->retain);
 
     if (status != MOSQ_ERR_SUCCESS) {
-        log_warning("failed to publish data to MQTT broker: %s", MOSQ_ERROR(status));
+        if (mqtt_needs_to_reconnect(status)) {
+            return internal_reconnect_mqtt(handle);
+        }
 
-        internal_reconnect_mqtt(handle);
+        log_warning("Failed to publish data to MQTT broker. Reason: %s", MOSQ_ERROR(status));
+        return -1;
     }
+
+    log_debug("Successfully send event on %s :: %s", topic, (char *)event->data);
+
+    return 0;
 }

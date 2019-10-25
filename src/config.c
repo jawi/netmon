@@ -99,8 +99,8 @@ static int init_config(config_t *cfg) {
 
 config_t *read_config(const char *file) {
     config_t *cfg = NULL;
-    yaml_parser_t parser;
-    yaml_event_t event;
+    yaml_parser_t parser = { 0 };
+    yaml_event_t event = { 0 };
 
     config_block_t cblock = ROOT;
     bool key_expected = false;

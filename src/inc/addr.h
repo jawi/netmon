@@ -21,4 +21,6 @@ addr_t *get_addr(addr_handle_t *handle, int32_t index);
 
 void free_addr(addr_t *addr);
 
+void dump_addr(addr_handle_t *handle);
+
 #endif /* ADDR_H_ */

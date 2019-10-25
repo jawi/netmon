@@ -15,4 +15,6 @@ void destroy_neigh(neigh_handle_t *handle);
 
 neigh_t *update_neigh(neigh_handle_t *handle, const struct nlmsghdr *nlh, int *result);
 
+void dump_neigh(neigh_handle_t *handle);
+
 #endif /* NEIGH_H_ */
