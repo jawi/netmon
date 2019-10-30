@@ -17,12 +17,11 @@
 #include <linux/if_link.h>
 #include <linux/rtnetlink.h>
 
-#include "addr.h"
 #include "config.h"
-#include "link.h"
 #include "logging.h"
-#include "neigh.h"
 #include "netlink.h"
+#include "oui.h"
+#include "util.h"
 
 struct netlink_handle {
     addr_handle_t *addr;
@@ -76,7 +75,13 @@ static int netlink_data_cb(const struct nlmsghdr *nlh, void *data) {
             addr_t *addr = get_addr(handle->addr, neigh->index);
             link_t *link = get_link(handle->link, neigh->index);
 
-            event_t *event = create_event(NEIGHBOUR_UPDATE, addr, link, neigh);
+            const char *vendor = NULL;
+            if (oui_list) {
+                uint64_t oui = convert_to_oui(neigh->ll_addr);
+                vendor = find_oui_vendor(oui_list, oui);
+            }
+
+            event_t *event = create_event(NEIGHBOUR_UPDATE, addr, link, neigh, vendor);
 
             if (event) {
                 (handle->callback)(event);

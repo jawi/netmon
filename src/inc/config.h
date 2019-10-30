@@ -15,6 +15,9 @@ typedef struct config {
     uid_t priv_user;
     gid_t priv_group;
 
+    char *oui_file;
+    bool vendor_lookup;
+
     char *client_id;
     char *host;
     uint16_t port;

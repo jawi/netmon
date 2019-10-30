@@ -7,7 +7,7 @@
 #ifndef ADDR_H_
 #define ADDR_H_
 
-#include "addr_common.h"
+#include <libmnl/libmnl.h>
 
 typedef struct addr_handle addr_handle_t;
 

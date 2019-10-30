@@ -30,6 +30,12 @@ The default configuration is defined as:
 ```yaml   
 # netmon configuration
 
+oui:
+   # the path to the vendor lookup file. See
+   # https://code.wireshark.org/review/gitweb?p=wireshark.git;a=blob_plain;f=manuf;hb=HEAD
+   # for a complete listing. If omitted, no vendor lookups will be performed.
+   file: /etc/netmon_oui.list
+
 daemon:
    # Denotes the user the daemon process will run under.
    # Defaults to "nobody".
@@ -103,9 +109,10 @@ for example:
 {
    "last_seen": 1558955353,
    "addr": "192.168.1.99",
-   "mac": "af:b8:62:f5:38:8c",
+   "mac": "ac:bc:32:f5:38:8c",
+   "vendor": "Apple Inc.",
    "src_iface": "eth0",
-   "src_mac": "10:67:ec:22:af:4e",
+   "src_mac": "10:66:82:22:af:4e",
    "src_vlan": 2,
    "src_ip": "192.168.1.1"
 }
@@ -122,6 +129,7 @@ The fields in the JSON object have the following semantics:
 | last_seen | the Unix epoch timestamp on which the neighbour was last seen by netmon    |
 | addr      | the IP address of the neighbour                                            |
 | mac       | the MAC address of the neighbour                                           |
+| vendor    | the name of the OUI / vendor of the neighbour                              |
 | src       | the information about the source interface on which the neighbour was seen |
 | src_iface | the source network interface                                               |
 | src_mac   | the source MAC address                                                     |
@@ -138,13 +146,17 @@ Netmon requires the following build dependencies:
 - libmosquitto (1.5.5 or later);
 - libyaml (0.2.1 or later).
 
-In addition, you a libc implementation that supports PTHREADS, such as glibc or
-musl.
+If you want to run the unit tests, you additionally need:
+
+- cUnit (2.1 or later).
 
 Since netlink functionality is used, netmon will only compile under Linux.
 
 Compilation is done by running `make all`. All build artifacts are placed in 
-the `build` directory.
+the `build` directory.  
+To compile the unit tests, add `TEST=1` to your make command, for example:
+`make TEST=1 clean all`. The result will be a `netmon_test` binary that will
+run all of the tests.
 
 ### Finding memory leaks
 

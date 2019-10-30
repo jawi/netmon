@@ -5,8 +5,15 @@ TARGET_EXEC = netmon
 BUILD_DIR = build
 SRC_DIRS = src
 INC_DIRS = src/inc
+TEST_DIRS = test
 
-SRCS := $(shell find $(SRC_DIRS) -name '*.cpp' -or -name '*.c' -or -name '*.s')
+ifdef TEST
+SRCS := $(shell find $(SRC_DIRS) $(TEST_DIRS) -name 'main.c' -prune -o -name '*.c' -print)
+TARGET_EXEC = netmon_test
+else
+SRCS := $(shell find $(SRC_DIRS) -name '*.c')
+endif
+
 OBJS := $(SRCS:%=$(BUILD_DIR)/%.o)
 DEPS := $(OBJS:.o=.d)
 
@@ -14,28 +21,21 @@ INC_FLAGS := $(addprefix -I,$(INC_DIRS))
 
 CFLAGS += -Wall -Wstrict-prototypes -Wmissing-prototypes -Wshadow -Wconversion
 CPPFLAGS += $(INC_FLAGS) -MMD -MP
-LDFLAGS = -lmnl -lmosquitto -pthread -lyaml
+LDFLAGS = -lmnl -lmosquitto -lyaml
+
+ifdef TEST
+LDFLAGS += -lcunit
+endif
 
 all: $(BUILD_DIR)/$(TARGET_EXEC)
 
 $(BUILD_DIR)/$(TARGET_EXEC): $(OBJS)
 	$(CC) $(OBJS) -o $@ $(LDFLAGS)
 
-# assembly
-$(BUILD_DIR)/%.s.o: %.s
-	$(MKDIR_P) $(dir $@)
-	$(AS) $(ASFLAGS) -c $< -o $@
-
 # c source
 $(BUILD_DIR)/%.c.o: %.c
 	$(MKDIR_P) $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
-
-# c++ source
-$(BUILD_DIR)/%.cpp.o: %.cpp
-	$(MKDIR_P) $(dir $@)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
-
 
 .PHONY: clean
 
