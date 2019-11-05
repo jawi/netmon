@@ -39,13 +39,17 @@ const char *event_topic_name(event_type_t event_type) {
       offset += ((size_t)status);                                              \
   } while (0)
 
-event_t *create_event(event_type_t event_type, const addr_t *src_addr, const link_t *src_link, const neigh_t *neigh) {
+event_t *create_event(event_type_t event_type, const addr_t *src_addr, const link_t *src_link, const neigh_t *neigh, const char *vendor) {
     size_t offset = 0;
     size_t buffer_size = INITIAL_BUFFER_SIZE;
     char *buffer = malloc(buffer_size * sizeof(char));
 
     BUFFER_ADD("{\"last_seen\":%lu,\"addr\":\"%s\",\"mac\":\"%s\"",
                time(NULL), neigh->dst_addr.addr, format_mac(neigh->ll_addr));
+
+    if (vendor) {
+        BUFFER_ADD(",\"vendor\":\"%s\"", vendor);
+    }
 
     if (src_link) {
         BUFFER_ADD(",\"src_iface\":\"%s\",\"src_mac\":\"%s\"",

@@ -7,7 +7,7 @@
 #ifndef LINK_H_
 #define LINK_H_
 
-#include "addr_common.h"
+#include <libmnl/libmnl.h>
 
 typedef struct link_handle link_handle_t;
 

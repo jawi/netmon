@@ -23,7 +23,7 @@ typedef struct event {
 
 const char *event_topic_name(event_type_t event_type);
 
-event_t *create_event(event_type_t event_type, const addr_t *src_addr, const link_t *src_link, const neigh_t *neigh);
+event_t *create_event(event_type_t event_type, const addr_t *src_addr, const link_t *src_link, const neigh_t *neigh, const char *vendor);
 
 void free_event(event_t *event);
 

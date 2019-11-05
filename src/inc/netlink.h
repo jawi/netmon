@@ -8,6 +8,9 @@
 #define NETLINK_H_
 
 #include "event.h"
+#include "addr.h"
+#include "link.h"
+#include "neigh.h"
 
 /**
  * Defines the handle that is to be used to talk to the Netlink routines.

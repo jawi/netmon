@@ -22,6 +22,7 @@
 typedef enum config_block {
     ROOT = 0,
     DAEMON,
+    OUI,
     MQTT,
     MQTT_AUTH,
     MQTT_TLS,
@@ -70,6 +71,9 @@ static int init_priv_user(config_t *cfg) {
 }
 
 static int init_config(config_t *cfg) {
+    cfg->oui_file = NULL;
+    cfg->vendor_lookup = false;
+
     cfg->client_id = NULL;
     cfg->host = NULL;
     cfg->port = 0;
@@ -180,6 +184,8 @@ config_t *read_config(const char *file) {
 
             if (VALUE_IN_CONTEXT("daemon", ROOT)) {
                 cblock = DAEMON;
+            } else if (VALUE_IN_CONTEXT("oui", ROOT)) {
+                cblock = OUI;
             } else if (VALUE_IN_CONTEXT("mqtt", ROOT)) {
                 cblock = MQTT;
             } else if (VALUE_IN_CONTEXT("auth", MQTT)) {
@@ -206,6 +212,9 @@ config_t *read_config(const char *file) {
                     } else {
                         PARSE_ERROR("invalid configuriation file: unknown group '%s'", val);
                     }
+                } else if (KEY_IN_CONTEXT("file", OUI)) {
+                    cfg->oui_file = safe_strdup(val);
+                    cfg->vendor_lookup = true;
                 } else if (KEY_IN_CONTEXT("client_id", MQTT)) {
                     cfg->client_id = safe_strdup(val);
                 } else if (KEY_IN_CONTEXT("host", MQTT)) {
@@ -325,6 +334,8 @@ void free_config(config_t *config) {
     if (!config) {
         return;
     }
+
+    free(config->oui_file);
 
     free(config->client_id);
     free(config->host);

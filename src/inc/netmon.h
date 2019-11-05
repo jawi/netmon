@@ -8,7 +8,7 @@
 #define NETMON_H_
 
 #define PNAME "netmon"
-#define VERSION "0.10.3"
+#define VERSION "0.11.0"
 
 #define PID_FILE "/run/" PNAME ".pid"
 #define CONF_FILE "/etc/" PNAME ".cfg"

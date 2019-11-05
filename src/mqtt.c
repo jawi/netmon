@@ -130,6 +130,7 @@ static int internal_reconnect_mqtt(mqtt_handle_t *handle) {
 }
 
 static void my_connect_cb(struct mosquitto *mosq, void *user_data, int result) {
+    (void)mosq;
     mqtt_handle_t *handle = (mqtt_handle_t *)user_data;
 
     if (!result) {
@@ -142,6 +143,7 @@ static void my_connect_cb(struct mosquitto *mosq, void *user_data, int result) {
 }
 
 static void my_disconnect_cb(struct mosquitto *mosq, void *user_data, int result) {
+    (void)mosq;
     mqtt_handle_t *handle = (mqtt_handle_t *)user_data;
 
     if (handle->conn_state != DISCONNECTED) {
@@ -151,6 +153,9 @@ static void my_disconnect_cb(struct mosquitto *mosq, void *user_data, int result
 }
 
 static void my_log_callback(struct mosquitto *mosq, void *user_data, int level, const char *msg) {
+    (void)mosq;
+    (void)user_data;
+    (void)level;
     log_debug(msg);
 }
 

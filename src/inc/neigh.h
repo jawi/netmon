@@ -7,6 +7,8 @@
 #ifndef NEIGH_H_
 #define NEIGH_H_
 
+#include <libmnl/libmnl.h>
+
 typedef struct neigh_handle neigh_handle_t;
 
 neigh_handle_t *init_neigh(void);

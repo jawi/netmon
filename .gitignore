@@ -3,6 +3,7 @@ build/
 exp/
 netmon.cfg
 netmon.yml
+netmon_oui.list
 *.code-workspace
 valgrind-out.txt
 .vscode/ipch/
